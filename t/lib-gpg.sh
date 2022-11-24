@@ -51,6 +51,27 @@ test_lazy_prereq GPG '
 	esac
 '
 
+test_lazy_prereq GPG2 '
+	gpg_version=$(gpg --version 2>&1)
+	test $? != 127 || exit 1
+
+	case "$gpg_version" in
+	"gpg (GnuPG) 1."*)
+		say "Skipping. For gpg v1.*, use prereq GPG"
+		! test_have_prereq GPG2
+		;;
+	*)
+		(gpgconf --kill all || : ) &&
+		gpg --homedir "${GNUPGHOME}" --import \
+			"$TEST_DIRECTORY"/lib-gpg/keyring.gpg &&
+		gpg --homedir "${GNUPGHOME}" --import-ownertrust \
+			"$TEST_DIRECTORY"/lib-gpg/ownertrust &&
+		gpg --homedir "${GNUPGHOME}" </dev/null >/dev/null \
+			--sign -u committer@example.com
+		;;
+	esac
+'
+
 test_lazy_prereq GPGSM '
 	test_have_prereq GPG &&
 	# Available key info:
