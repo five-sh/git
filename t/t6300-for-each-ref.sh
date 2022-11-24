@@ -6,6 +6,7 @@
 test_description='for-each-ref test'
 
 . ./test-lib.sh
+GNUPGHOME_NOT_USED=$GNUPGHOME
 . "$TEST_DIRECTORY"/lib-gpg.sh
 . "$TEST_DIRECTORY"/lib-terminal.sh
 
@@ -1520,6 +1521,159 @@ test_expect_success 'git for-each-ref with non-existing refs' '
 
 	xargs git for-each-ref --format="%(refname)" <in >actual &&
 	test_must_be_empty actual
+'
+
+GRADE_FORMAT="%(signature:grade)%0a%(signature:key)%0a%(signature:signer)%0a%(signature:fingerprint)%0a%(signature:primarykeyfingerprint)"
+TRUSTLEVEL_FORMAT="%(signature:trustlevel)%0a%(signature:key)%0a%(signature:signer)%0a%(signature:fingerprint)%0a%(signature:primarykeyfingerprint)"
+
+test_expect_success GPG 'setup: signature' '
+	git checkout -b signed &&
+
+	echo "1" >file &&
+	git add file &&
+	test_tick &&
+	git commit -S -m "file: 1" &&
+	git tag first-signed &&
+
+	echo "2" >file &&
+	test_tick &&
+	git commit -a -m "file: 2" &&
+	git tag second-unsigned &&
+
+	git config commit.gpgSign 1 &&
+	echo "3" >file &&
+	test_tick &&
+	git commit -a --no-gpg-sign -m "file: 3" &&
+	git tag third-unsigned &&
+
+	test_tick &&
+	git rebase -f HEAD^^ && git tag second-signed HEAD^ &&
+	git tag third-signed &&
+
+	echo "4" >file &&
+	test_tick &&
+	git commit -a -SB7227189 -m "file: 4" &&
+	git tag fourth-signed &&
+
+	echo "5" >file &&
+	test_tick &&
+	git commit -a --no-gpg-sign -m "file: 5" &&
+	git tag fifth-unsigned &&
+
+	echo "6" >file &&
+	test_tick &&
+	git commit -a --no-gpg-sign -m "file: 6" &&
+
+	test_tick &&
+	git rebase -f HEAD^^ &&
+	git tag fifth-signed HEAD^ &&
+	git tag sixth-signed &&
+
+	echo "7" >file &&
+	test_tick &&
+	git commit -a --no-gpg-sign -m "file: 7" &&
+	git tag seventh-unsigned
+'
+
+test_expect_success GPG2 'test bare signature atom' '
+	git verify-commit first-signed 2>out_orig &&
+	grep -Ev "checking the trustdb|PGP trust model" out_orig >out &&
+	head -3 out >expected &&
+	tail -1 out >>expected &&
+	echo >>expected &&
+	git for-each-ref refs/tags/first-signed --format="%(signature)" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success GPG 'show good signature with custom format' '
+	git verify-commit first-signed &&
+	cat >expect <<-\EOF &&
+	G
+	13B6F51ECDDE430D
+	C O Mitter <committer@example.com>
+	73D758744BE721698EC54E8713B6F51ECDDE430D
+	73D758744BE721698EC54E8713B6F51ECDDE430D
+	EOF
+	git for-each-ref refs/tags/first-signed --format="$GRADE_FORMAT" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPG 'test signature atom with grade option and bad signature' '
+	git cat-file commit third-signed >raw &&
+	sed -e "s/^file: 3/file: 3 forged/" raw >forged1 &&
+	FORGED1=$(git hash-object -w -t commit forged1) &&
+	git update-ref refs/tags/third-signed "$FORGED1" &&
+	test_must_fail git verify-commit "$FORGED1" &&
+
+	cat >expect <<-\EOF &&
+	B
+	13B6F51ECDDE430D
+	C O Mitter <committer@example.com>
+
+
+	EOF
+	git for-each-ref refs/tags/third-signed --format="$GRADE_FORMAT" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPG 'show untrusted signature with custom format' '
+	cat >expect <<-\EOF &&
+	U
+	65A0EEA02E30CAD7
+	Eris Discordia <discord@example.net>
+	F8364A59E07FFE9F4D63005A65A0EEA02E30CAD7
+	D4BE22311AD3131E5EDA29A461092E85B7227189
+	EOF
+	git for-each-ref refs/tags/fourth-signed --format="$GRADE_FORMAT" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPG 'show untrusted signature with undefined trust level' '
+	cat >expect <<-\EOF &&
+	undefined
+	65A0EEA02E30CAD7
+	Eris Discordia <discord@example.net>
+	F8364A59E07FFE9F4D63005A65A0EEA02E30CAD7
+	D4BE22311AD3131E5EDA29A461092E85B7227189
+	EOF
+	git for-each-ref refs/tags/fourth-signed --format="$TRUSTLEVEL_FORMAT" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPG 'show untrusted signature with ultimate trust level' '
+	cat >expect <<-\EOF &&
+	ultimate
+	13B6F51ECDDE430D
+	C O Mitter <committer@example.com>
+	73D758744BE721698EC54E8713B6F51ECDDE430D
+	73D758744BE721698EC54E8713B6F51ECDDE430D
+	EOF
+	git for-each-ref refs/tags/sixth-signed --format="$TRUSTLEVEL_FORMAT" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPG 'show unknown signature with custom format' '
+	cat >expect <<-\EOF &&
+	E
+	13B6F51ECDDE430D
+
+
+
+	EOF
+	GNUPGHOME="$GNUPGHOME_NOT_USED" git for-each-ref refs/tags/sixth-signed --format="$GRADE_FORMAT" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPG 'show lack of signature with custom format' '
+	cat >expect <<-\EOF &&
+	N
+
+
+
+
+	EOF
+	git for-each-ref refs/tags/seventh-unsigned --format="$GRADE_FORMAT" >actual &&
+	test_cmp expect actual
 '
 
 test_done
