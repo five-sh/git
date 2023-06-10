@@ -2,6 +2,7 @@
 #include "alloc.h"
 #include "config.h"
 #include "commit.h"
+#include "ref-filter.h"
 #include "environment.h"
 #include "gettext.h"
 #include "hex.h"
