@@ -27,6 +27,34 @@
  */
 #define FORMATTING_LIMIT (16 * 1024)
 
+static struct placeholder_atom_map {
+	/*
+	 * TODO: Do something like enum atom_type for placeholders too,
+	 * but is it worth it?
+	 */
+	const char *placeholder;
+	enum atom_type atom;
+} placeholders[] = {
+	{ "an", ATOM_AUTHORNAME	},
+	{ "ad", ATOM_AUTHORDATE },
+	{ "cn", ATOM_COMMITERNAME },
+	{ "cd", ATOM_COMMITERDATE },
+	{ NULL, NULL }
+};
+
+/* Check if the given placeholder is in the placeholder_atom_map */
+static int in_ref_filter(const char *ph)
+{
+	struct placeholder_atom_map *pa_map = placeholders;
+	int i;
+
+	for (i = 0; pa_map; i++) {
+		if (!strcmp(ph, pa_map[i].placeholder))
+			return 1;
+	}
+	return 0;
+}
+
 static char *user_format;
 static struct cmt_fmt_map {
 	const char *name;
