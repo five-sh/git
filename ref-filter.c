@@ -2,9 +2,11 @@
 #include "alloc.h"
 #include "environment.h"
 #include "gettext.h"
+#include "config.h"
 #include "gpg-interface.h"
 #include "hex.h"
 #include "parse-options.h"
+#include "run-command.h"
 #include "refs.h"
 #include "wildmatch.h"
 #include "object-name.h"
@@ -146,6 +148,7 @@ enum atom_type {
 	ATOM_TAGGERDATE,
 	ATOM_CREATOR,
 	ATOM_CREATORDATE,
+	ATOM_DESCRIBE,
 	ATOM_SUBJECT,
 	ATOM_BODY,
 	ATOM_TRAILERS,
@@ -215,6 +218,11 @@ static struct used_atom {
 		struct email_option {
 			enum { EO_RAW, EO_TRIM, EO_LOCALPART } option;
 		} email_option;
+		struct {
+			enum { D_BARE, D_TAGS, D_ABBREV,
+			       D_EXCLUDE, D_MATCH } option;
+			const char **args;
+		} describe;
 		struct refname_atom refname;
 		char *head;
 	} u;
@@ -521,6 +529,94 @@ static int contents_atom_parser(struct ref_format *format, struct used_atom *ato
 	return 0;
 }
 
+static int describe_atom_parser(struct ref_format *format UNUSED,
+				struct used_atom *atom,
+				const char *arg, struct strbuf *err)
+{
+	const char *describe_opts[] = {
+		"",
+		"tags",
+		"abbrev",
+		"match",
+		"exclude",
+		NULL
+	};
+
+	struct strvec args = STRVEC_INIT;
+	for (;;) {
+		int found = 0;
+		const char *argval;
+		size_t arglen = 0;
+		int optval = 0;
+		int opt;
+
+		if (!arg)
+			break;
+
+		for (opt = D_BARE; !found && describe_opts[opt]; opt++) {
+			switch(opt) {
+			case D_BARE:
+				/*
+				 * Do nothing. This is the bare describe
+				 * atom and we already handle this above.
+				 */
+				break;
+			case D_TAGS:
+				if (match_atom_bool_arg(arg, describe_opts[opt],
+							&arg, &optval)) {
+					if (!optval)
+						strvec_pushf(&args, "--no-%s",
+							     describe_opts[opt]);
+					else
+						strvec_pushf(&args, "--%s",
+							     describe_opts[opt]);
+					found = 1;
+				}
+				break;
+			case D_ABBREV:
+				if (match_atom_arg_value(arg, describe_opts[opt],
+							 &arg, &argval, &arglen)) {
+					char *endptr;
+					int ret = 0;
+
+					if (!arglen)
+						ret = -1;
+					if (strtol(argval, &endptr, 10) < 0)
+						ret = -1;
+					if (endptr - argval != arglen)
+						ret = -1;
+
+					if (ret)
+						return strbuf_addf_ret(err, ret,
+								_("positive value expected describe:abbrev=%s"), argval);
+					strvec_pushf(&args, "--%s=%.*s",
+						     describe_opts[opt],
+						     (int)arglen, argval);
+					found = 1;
+				}
+				break;
+			case D_MATCH:
+			case D_EXCLUDE:
+				if (match_atom_arg_value(arg, describe_opts[opt],
+							 &arg, &argval, &arglen)) {
+					if (!arglen)
+						return strbuf_addf_ret(err, -1,
+								_("value expected describe:%s="), describe_opts[opt]);
+					strvec_pushf(&args, "--%s=%.*s",
+						     describe_opts[opt],
+						     (int)arglen, argval);
+					found = 1;
+				}
+				break;
+			}
+		}
+		if (!found)
+			break;
+	}
+	atom->u.describe.args = strvec_detach(&args);
+	return 0;
+}
+
 static int raw_atom_parser(struct ref_format *format UNUSED,
 			   struct used_atom *atom,
 			   const char *arg, struct strbuf *err)
@@ -723,6 +819,7 @@ static struct {
 	[ATOM_TAGGERDATE] = { "taggerdate", SOURCE_OBJ, FIELD_TIME },
 	[ATOM_CREATOR] = { "creator", SOURCE_OBJ },
 	[ATOM_CREATORDATE] = { "creatordate", SOURCE_OBJ, FIELD_TIME },
+	[ATOM_DESCRIBE] = { "describe", SOURCE_OBJ, FIELD_STR, describe_atom_parser },
 	[ATOM_SUBJECT] = { "subject", SOURCE_OBJ, FIELD_STR, subject_atom_parser },
 	[ATOM_BODY] = { "body", SOURCE_OBJ, FIELD_STR, body_atom_parser },
 	[ATOM_TRAILERS] = { "trailers", SOURCE_OBJ, FIELD_STR, trailers_atom_parser },
@@ -1542,6 +1639,54 @@ static void append_lines(struct strbuf *out, const char *buf, unsigned long size
 	}
 }
 
+static void grab_describe_values(struct atom_value *val, int deref,
+				 struct object *obj)
+{
+	struct commit *commit = (struct commit *)obj;
+	int i;
+
+	for (i = 0; i < used_atom_cnt; i++) {
+		struct used_atom *atom = &used_atom[i];
+		enum atom_type type = atom->atom_type;
+		const char *name = atom->name;
+		struct atom_value *v = &val[i];
+
+		struct child_process cmd = CHILD_PROCESS_INIT;
+		struct strbuf out = STRBUF_INIT;
+		struct strbuf err = STRBUF_INIT;
+
+		if (type != ATOM_DESCRIBE)
+			continue;
+
+		if (!!deref != (*name == '*'))
+			continue;
+		if (deref)
+			name++;
+
+		if (!skip_prefix(name, "describe", &name) ||
+		    (*name && *name != ':'))
+			    continue;
+		if (!*name)
+			name = NULL;
+		else
+			name++;
+
+		cmd.git_cmd = 1;
+		strvec_push(&cmd.args, "describe");
+		strvec_pushv(&cmd.args, atom->u.describe.args);
+		strvec_push(&cmd.args, oid_to_hex(&commit->object.oid));
+		if (pipe_command(&cmd, NULL, 0, &out, 0, &err, 0) < 0) {
+			error(_("failed to run 'describe'"));
+			v->s = xstrdup("");
+			continue;
+		}
+		strbuf_rtrim(&out);
+		v->s = strbuf_detach(&out, NULL);
+
+		strbuf_release(&err);
+	}
+}
+
 /* See grab_values */
 static void grab_sub_body_contents(struct atom_value *val, int deref, struct expand_data *data)
 {
@@ -1651,12 +1796,14 @@ static void grab_values(struct atom_value *val, int deref, struct object *obj, s
 		grab_tag_values(val, deref, obj);
 		grab_sub_body_contents(val, deref, data);
 		grab_person("tagger", val, deref, buf);
+		grab_describe_values(val, deref, obj);
 		break;
 	case OBJ_COMMIT:
 		grab_commit_values(val, deref, obj);
 		grab_sub_body_contents(val, deref, data);
 		grab_person("author", val, deref, buf);
 		grab_person("committer", val, deref, buf);
+		grab_describe_values(val, deref, obj);
 		break;
 	case OBJ_TREE:
 		/* grab_tree_values(val, deref, obj, buf, sz); */
