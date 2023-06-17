@@ -231,6 +231,25 @@ ahead-behind:<committish>::
 	commits ahead and behind, respectively, when comparing the output
 	ref to the `<committish>` specified in the format.
 
+describe[:options]:: human-readable name, like
+		     link-git:git-describe[1]; empty string for
+		     undescribable commits. The `describe` string may be
+		     followed by a colon and zero or more comma-separated
+		     options. Descriptions can be inconsistent when tags
+		     are added or removed at the same time.
++
+** tags=<bool-value>: Instead of only considering annotated tags, consider
+		      lightweight tags as well.
+** abbrev=<number>: Instead of using the default number of hexadecimal digits
+		    (which will vary according to the number of objects in the
+		    repository with a default of 7) of the abbreviated
+		    object name, use <number> digits, or as many digits as
+		    needed to form a unique object name.
+** match=<pattern>: Only consider tags matching the given `glob(7)` pattern,
+		    excluding the "refs/tags/" prefix.
+** exclude=<pattern>: Do not consider tags matching the given `glob(7)`
+		      pattern,excluding the "refs/tags/" prefix.
+
 In addition to the above, for commit and tag objects, the header
 field names (`tree`, `parent`, `object`, `type`, and `tag`) can
 be used to specify the value in the header field.

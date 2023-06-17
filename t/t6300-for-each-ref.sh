@@ -561,6 +561,80 @@ test_expect_success 'color.ui=always does not override tty check' '
 	test_cmp expected.bare actual
 '
 
+test_expect_success 'setup for describe atom tests' '
+	git init describe-repo &&
+	(
+		cd describe-repo &&
+
+		test_commit --no-tag one &&
+		git tag tagone &&
+
+		test_commit --no-tag two &&
+		git tag -a -m "tag two" tagtwo
+	)
+'
+
+test_expect_success 'describe atom vs git describe' '
+	test_when_finished "rm -rf describe-repo" &&
+	(
+		cd describe-repo &&
+		git for-each-ref refs/tags/ --format="%(objectname)" >obj &&
+		while read hash
+		do
+			if desc=$(git describe $hash)
+			then
+				: >expect-contains-good
+			else
+				: >expect-contains-bad
+			fi &&
+			echo "$hash $desc" || return 1
+		done <obj >expect &&
+		test_path_exists expect-contains-good &&
+		test_path_exists expect-contains-bad &&
+
+		git for-each-ref refs/tags/ \
+			--format="%(objectname) %(describe)" >actual 2>err &&
+		test_cmp expect actual &&
+		test_must_be_empty err
+	)
+'
+
+test_expect_success 'describe:tags vs describe --tags' '
+	test_when_finished "git tag -d tagname" &&
+	git tag tagname &&
+	git describe --tags >expect &&
+	git for-each-ref refs/heads/ --format="%(describe:tags)" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'describe:abbrev=... vs describe --abbrev=...' '
+	echo "file txt" >file &&
+	git add file &&
+	git commit -m "file: txt" &&
+	git describe --abbrev=14 >expect &&
+	git for-each-ref refs/heads/ \
+		--format="%(describe:abbrev=14)" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'describe:match=... vs describe --match ...' '
+	test_when_finished "git tag -d tag-match" &&
+	git tag -a -m "tag match" tag-match &&
+	git describe --match "*-match" >expect &&
+	git for-each-ref refs/heads/ \
+		--format="%(describe:match="*-match")" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'describe:exclude:... vs describe --exclude ...' '
+	test_when_finished "git tag -d tag-exclude" &&
+	git tag -a -m "tag exclude" tag-exclude &&
+	git describe --exclude "*-exclude" >expect &&
+	git for-each-ref refs/heads/ \
+		--format="%(describe:exclude="*-exclude")" >actual &&
+	test_cmp expect actual
+'
+
 cat >expected <<\EOF
 heads/main
 tags/main
