@@ -1,9 +1,11 @@
 #include "git-compat-util.h"
 #include "environment.h"
 #include "gettext.h"
+#include "config.h"
 #include "gpg-interface.h"
 #include "hex.h"
 #include "parse-options.h"
+#include "run-command.h"
 #include "refs.h"
 #include "wildmatch.h"
 #include "object-name.h"
@@ -145,6 +147,7 @@ enum atom_type {
 	ATOM_TAGGERDATE,
 	ATOM_CREATOR,
 	ATOM_CREATORDATE,
+	ATOM_DESCRIBE,
 	ATOM_SUBJECT,
 	ATOM_BODY,
 	ATOM_TRAILERS,
@@ -219,6 +222,7 @@ static struct used_atom {
 			enum { S_BARE, S_GRADE, S_SIGNER, S_KEY,
 			       S_FINGERPRINT, S_PRI_KEY_FP, S_TRUST_LEVEL } option;
 		} signature;
+		const char **describe_args;
 		struct refname_atom refname;
 		char *head;
 	} u;
@@ -283,29 +287,31 @@ static int match_atom_arg_value(const char *to_parse, const char *candidate,
 {
 	const char *atom;
 
-	if (!(skip_prefix(to_parse, candidate, &atom)))
+	if (!skip_prefix(to_parse, candidate, &atom))
+		return 0; /* definitely not "candidate" */
+
+	if (*atom == '=') {
+		/* we just saw "candidate=" */
+		*valuestart = atom + 1;
+		atom = strchrnul(*valuestart, ',');
+		*valuelen = atom - *valuestart;
+	} else if (*atom != ',' && *atom != '\0') {
+		/* key begins with "candidate" but has more chars */
 		return 0;
-	if (valuestart) {
-		if (*atom == '=') {
-			*valuestart = atom + 1;
-			*valuelen = strcspn(*valuestart, ",\0");
-			atom = *valuestart + *valuelen;
-		} else {
-			if (*atom != ',' && *atom != '\0')
-				return 0;
-			*valuestart = NULL;
-			*valuelen = 0;
-		}
+	} else {
+		/* just "candidate" without "=val" */
+		*valuestart = NULL;
+		*valuelen = 0;
 	}
-	if (*atom == ',') {
-		*end = atom + 1;
-		return 1;
-	}
-	if (*atom == '\0') {
-		*end = atom;
-		return 1;
-	}
-	return 0;
+
+	/* atom points at either the ',' or NUL after this key[=val] */
+	if (*atom == ',')
+		atom++;
+	else if (*atom)
+		BUG("should not happen");
+
+	*end = atom;
+	return 1;
 }
 
 /*
@@ -597,6 +603,91 @@ static int contents_atom_parser(struct ref_format *format, struct used_atom *ato
 	return 0;
 }
 
+static int describe_atom_option_parser(struct strvec *args, const char **arg,
+				       struct strbuf *err)
+{
+	const char *argval;
+	size_t arglen = 0;
+	int optval = 0;
+
+	if (match_atom_bool_arg(*arg, "tags", arg, &optval)) {
+		if (!optval)
+			strvec_push(args, "--no-tags");
+		else
+			strvec_push(args, "--tags");
+		return 1;
+	}
+
+	if (match_atom_arg_value(*arg, "abbrev", arg, &argval, &arglen)) {
+		char *endptr;
+
+		if (!arglen)
+			return strbuf_addf_ret(err, -1,
+					       _("argument expected for %s"),
+					       "describe:abbrev");
+		if (strtol(argval, &endptr, 10) < 0)
+			return strbuf_addf_ret(err, -1,
+					       _("positive value expected %s=%s"),
+					       "describe:abbrev", argval);
+		if (endptr - argval != arglen)
+			return strbuf_addf_ret(err, -1,
+					       _("cannot fully parse %s=%s"),
+					       "describe:abbrev", argval);
+
+		strvec_pushf(args, "--abbrev=%.*s", (int)arglen, argval);
+		return 1;
+	}
+
+	if (match_atom_arg_value(*arg, "match", arg, &argval, &arglen)) {
+		if (!arglen)
+			return strbuf_addf_ret(err, -1,
+					       _("value expected %s="),
+					       "describe:match");
+
+		strvec_pushf(args, "--match=%.*s", (int)arglen, argval);
+		return 1;
+	}
+
+	if (match_atom_arg_value(*arg, "exclude", arg, &argval, &arglen)) {
+		if (!arglen)
+			return strbuf_addf_ret(err, -1,
+					       _("value expected %s="),
+					       "describe:exclude");
+
+		strvec_pushf(args, "--exclude=%.*s", (int)arglen, argval);
+		return 1;
+	}
+
+	return 0;
+}
+
+static int describe_atom_parser(struct ref_format *format UNUSED,
+				struct used_atom *atom,
+				const char *arg, struct strbuf *err)
+{
+	struct strvec args = STRVEC_INIT;
+
+	for (;;) {
+		int found = 0;
+		const char *bad_arg = NULL;
+
+		if (!arg || !*arg)
+			break;
+
+		bad_arg = arg;
+		found = describe_atom_option_parser(&args, &arg, err);
+		if (found < 0)
+			return found;
+		if (!found) {
+			if (bad_arg && *bad_arg)
+				return err_bad_arg(err, "describe", bad_arg);
+			break;
+		}
+	}
+	atom->u.describe_args = strvec_detach(&args);
+	return 0;
+}
+
 static int raw_atom_parser(struct ref_format *format UNUSED,
 			   struct used_atom *atom,
 			   const char *arg, struct strbuf *err)
@@ -799,6 +890,7 @@ static struct {
 	[ATOM_TAGGERDATE] = { "taggerdate", SOURCE_OBJ, FIELD_TIME },
 	[ATOM_CREATOR] = { "creator", SOURCE_OBJ },
 	[ATOM_CREATORDATE] = { "creatordate", SOURCE_OBJ, FIELD_TIME },
+	[ATOM_DESCRIBE] = { "describe", SOURCE_OBJ, FIELD_STR, describe_atom_parser },
 	[ATOM_SUBJECT] = { "subject", SOURCE_OBJ, FIELD_STR, subject_atom_parser },
 	[ATOM_BODY] = { "body", SOURCE_OBJ, FIELD_STR, body_atom_parser },
 	[ATOM_TRAILERS] = { "trailers", SOURCE_OBJ, FIELD_STR, trailers_atom_parser },
@@ -1705,6 +1797,44 @@ static void append_lines(struct strbuf *out, const char *buf, unsigned long size
 	}
 }
 
+static void grab_describe_values(struct atom_value *val, int deref,
+				 struct object *obj)
+{
+	struct commit *commit = (struct commit *)obj;
+	int i;
+
+	for (i = 0; i < used_atom_cnt; i++) {
+		struct used_atom *atom = &used_atom[i];
+		enum atom_type type = atom->atom_type;
+		const char *name = atom->name;
+		struct atom_value *v = &val[i];
+
+		struct child_process cmd = CHILD_PROCESS_INIT;
+		struct strbuf out = STRBUF_INIT;
+		struct strbuf err = STRBUF_INIT;
+
+		if (type != ATOM_DESCRIBE)
+			continue;
+
+		if (!!deref != (*name == '*'))
+			continue;
+
+		cmd.git_cmd = 1;
+		strvec_push(&cmd.args, "describe");
+		strvec_pushv(&cmd.args, atom->u.describe_args);
+		strvec_push(&cmd.args, oid_to_hex(&commit->object.oid));
+		if (pipe_command(&cmd, NULL, 0, &out, 0, &err, 0) < 0) {
+			error(_("failed to run 'describe'"));
+			v->s = xstrdup("");
+			continue;
+		}
+		strbuf_rtrim(&out);
+		v->s = strbuf_detach(&out, NULL);
+
+		strbuf_release(&err);
+	}
+}
+
 /* See grab_values */
 static void grab_sub_body_contents(struct atom_value *val, int deref, struct expand_data *data)
 {
@@ -1814,6 +1944,7 @@ static void grab_values(struct atom_value *val, int deref, struct object *obj, s
 		grab_tag_values(val, deref, obj);
 		grab_sub_body_contents(val, deref, data);
 		grab_person("tagger", val, deref, buf);
+		grab_describe_values(val, deref, obj);
 		break;
 	case OBJ_COMMIT:
 		grab_commit_values(val, deref, obj);
@@ -1821,6 +1952,7 @@ static void grab_values(struct atom_value *val, int deref, struct object *obj, s
 		grab_person("author", val, deref, buf);
 		grab_person("committer", val, deref, buf);
 		grab_signature(val, deref, obj);
+		grab_describe_values(val, deref, obj);
 		break;
 	case OBJ_TREE:
 		/* grab_tree_values(val, deref, obj, buf, sz); */
