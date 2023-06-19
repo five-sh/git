@@ -1011,8 +1011,7 @@ test_expect_success '%(describe:tags) vs git describe --tags' '
 '
 
 test_expect_success '%(describe:abbrev=...) vs git describe --abbrev=...' '
-	test_when_finished "git tag -d tagname" &&
-	git tag -a -m tagged tagname &&
+	test_commit --no-tag file &&
 	git describe --abbrev=15 >expect &&
 	git log -1 --format="%(describe:abbrev=15)" >actual &&
 	test_cmp expect actual
