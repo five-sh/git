@@ -562,9 +562,7 @@ test_expect_success 'color.ui=always does not override tty check' '
 	test_cmp expected.bare actual
 '
 
-test_expect_success 'describe atom vs git describe' '
-	test_when_finished "rm -rf describe-repo" &&
-
+test_expect_success 'setup for describe atom tests' '
 	git init describe-repo &&
 	(
 		cd describe-repo &&
@@ -573,9 +571,16 @@ test_expect_success 'describe atom vs git describe' '
 		git tag tagone &&
 
 		test_commit --no-tag two &&
-		git tag -a -m "tag two" tagtwo &&
+		git tag -a -m "tag two" tagtwo
+	)
+'
 
-		git for-each-ref refs/tags/ --format="%(objectname)" >obj &&
+test_expect_success 'describe atom vs git describe' '
+	(
+		cd describe-repo &&
+
+		git for-each-ref --format="%(objectname)" \
+			refs/tags/ >obj &&
 		while read hash
 		do
 			if desc=$(git describe $hash)
@@ -597,54 +602,62 @@ test_expect_success 'describe atom vs git describe' '
 '
 
 test_expect_success 'describe:tags vs describe --tags' '
-	test_when_finished "git tag -d tagname" &&
-	git tag tagname &&
-	git describe --tags >expect &&
-	git for-each-ref --format="%(describe:tags)" refs/heads/ >actual &&
-	test_cmp expect actual
+	(
+		cd describe-repo &&
+		git describe --tags >expect &&
+		git for-each-ref --format="%(describe:tags)" \
+				refs/heads/ >actual &&
+		test_cmp expect actual
+	)
 '
 
 test_expect_success 'describe:abbrev=... vs describe --abbrev=...' '
-	test_when_finished "git tag -d tagname" &&
+	(
+		cd describe-repo &&
 
-	# Case 1: We have commits between HEAD and the most
-	#         recent tag reachable from it
-	test_commit --no-tag file &&
-	git describe --abbrev=14 >expect &&
-	git for-each-ref --format="%(describe:abbrev=14)" \
-		refs/heads/ >actual &&
-	test_cmp expect actual &&
+		# Case 1: We have commits between HEAD and the most
+		#	  recent tag reachable from it
+		test_commit --no-tag file &&
+		git describe --abbrev=14 >expect &&
+		git for-each-ref --format="%(describe:abbrev=14)" \
+			refs/heads/ >actual &&
+		test_cmp expect actual &&
 
-	# Make sure the hash used is atleast 14 digits long
-	sed -e "s/^.*-g\([0-9a-f]*\)$/\1/" <actual >hexpart &&
-	test 15 -le $(wc -c <hexpart) &&
+		# Make sure the hash used is atleast 14 digits long
+		sed -e "s/^.*-g\([0-9a-f]*\)$/\1/" <actual >hexpart &&
+		test 15 -le $(wc -c <hexpart) &&
 
-	# Case 2: We have a tag at HEAD, describe directly gives
-	#         the name of the tag
-	git tag -a -m tagged tagname &&
-	git describe --abbrev=14 >expect &&
-	git for-each-ref --format="%(describe:abbrev=14)" \
-		refs/heads/ >actual &&
-	test_cmp expect actual &&
-	test tagname = $(cat actual)
+		# Case 2: We have a tag at HEAD, describe directly gives
+		#	  the name of the tag
+		git tag -a -m tagged tagname &&
+		git describe --abbrev=14 >expect &&
+		git for-each-ref --format="%(describe:abbrev=14)" \
+			refs/heads/ >actual &&
+		test_cmp expect actual &&
+		test tagname = $(cat actual)
+	)
 '
 
 test_expect_success 'describe:match=... vs describe --match ...' '
-	test_when_finished "git tag -d tag-match" &&
-	git tag -a -m "tag match" tag-match &&
-	git describe --match "*-match" >expect &&
-	git for-each-ref --format="%(describe:match="*-match")" \
-		refs/heads/ >actual &&
-	test_cmp expect actual
+	(
+		cd describe-repo &&
+		git tag -a -m "tag match" tag-match &&
+		git describe --match "*-match" >expect &&
+		git for-each-ref --format="%(describe:match="*-match")" \
+			refs/heads/ >actual &&
+		test_cmp expect actual
+	)
 '
 
 test_expect_success 'describe:exclude:... vs describe --exclude ...' '
-	test_when_finished "git tag -d tag-exclude" &&
-	git tag -a -m "tag exclude" tag-exclude &&
-	git describe --exclude "*-exclude" >expect &&
-	git for-each-ref --format="%(describe:exclude="*-exclude")" \
-		refs/heads/ >actual &&
-	test_cmp expect actual
+	(
+		cd describe-repo &&
+		git tag -a -m "tag exclude" tag-exclude &&
+		git describe --exclude "*-exclude" >expect &&
+		git for-each-ref --format="%(describe:exclude="*-exclude")" \
+			refs/heads/ >actual &&
+		test_cmp expect actual
+	)
 '
 
 test_expect_success 'deref with describe atom' '
