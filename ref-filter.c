@@ -255,6 +255,65 @@ static int err_bad_arg(struct strbuf *sb, const char *name, const char *arg)
 	return -1;
 }
 
+static int match_atom_arg_value(const char *to_parse, const char *candidate,
+				const char **end, const char **valuestart,
+				size_t *valuelen)
+{
+	const char *atom;
+
+	if (!(skip_prefix(to_parse, candidate, &atom)))
+		return 0;
+	if (valuestart) {
+		if (*atom == '=') {
+			*valuestart = atom + 1;
+			*valuelen = strcspn(*valuestart, ",\0");
+			atom = *valuestart + *valuelen;
+		} else {
+			if (*atom != ',' && *atom != '\0')
+				return 0;
+			*valuestart = NULL;
+			*valuelen = 0;
+		}
+	}
+	if (*atom == ',') {
+		*end = atom + 1;
+		return 1;
+	}
+	if (*atom == '\0') {
+		*end = atom;
+		return 1;
+	}
+	return 0;
+}
+
+static int match_atom_bool_arg(const char *to_parse, const char *candidate,
+				const char **end, int *val)
+{
+	const char *argval;
+	char *strval;
+	size_t arglen;
+	int v;
+
+	if (!match_atom_arg_value(to_parse, candidate, end, &argval, &arglen))
+		return 0;
+
+	if (!argval) {
+		*val = 1;
+		return 1;
+	}
+
+	strval = xstrndup(argval, arglen);
+	v = git_parse_maybe_bool(strval);
+	free(strval);
+
+	if (v == -1)
+		return 0;
+
+	*val = v;
+
+	return 1;
+}
+
 static int color_atom_parser(struct ref_format *format, struct used_atom *atom,
 			     const char *color_value, struct strbuf *err)
 {
