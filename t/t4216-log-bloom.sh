@@ -410,6 +410,13 @@ get_bdat_offset () {
 		.git/objects/info/commit-graph
 }
 
+get_changed_path_filter_version () {
+	BDAT_OFFSET=$(get_bdat_offset) &&
+	perl -0777 -ne \
+		'print unpack("H*", substr($_, '$BDAT_OFFSET', 4))' \
+		.git/objects/info/commit-graph
+}
+
 get_first_changed_path_filter () {
 	BDAT_OFFSET=$(get_bdat_offset) &&
 	perl -0777 -ne \
@@ -426,7 +433,7 @@ test_expect_success 'set up repo with high bit path, version 1 changed-path' '
 	git -C highbit1 commit-graph write --reachable --changed-paths
 '
 
-test_expect_success 'setup check value of version 1 changed-path' '
+test_expect_success 'check value of version 1 changed-path' '
 	(cd highbit1 &&
 		printf "52a9" >expect &&
 		get_first_changed_path_filter >actual &&
@@ -449,6 +456,69 @@ test_expect_success SIGNED_CHAR_BY_DEFAULT 'check value of version 1 changed-pat
 test_expect_success 'version 1 changed-path used when version 1 requested' '
 	(cd highbit1 &&
 		test_bloom_filters_used "-- $CENT")
+'
+
+test_expect_success 'version 1 changed-path not used when version 2 requested' '
+	(cd highbit1 &&
+		git config --add commitgraph.changedPathsVersion 2 &&
+		test_bloom_filters_not_used "-- $CENT")
+'
+
+test_expect_success 'version 1 changed-path used when autodetect requested' '
+	(cd highbit1 &&
+		git config --add commitgraph.changedPathsVersion -1 &&
+		test_bloom_filters_used "-- $CENT")
+'
+
+test_expect_success 'when writing another commit graph, preserve existing version 1 of changed-path' '
+	test_commit -C highbit1 c1double "$CENT$CENT" &&
+	git -C highbit1 commit-graph write --reachable --changed-paths &&
+	(cd highbit1 &&
+		git config --add commitgraph.changedPathsVersion -1 &&
+		printf "00000001" >expect &&
+		get_changed_path_filter_version >actual &&
+		test_cmp expect actual)
+'
+
+test_expect_success 'set up repo with high bit path, version 2 changed-path' '
+	git init highbit2 &&
+	git -C highbit2 config --add commitgraph.changedPathsVersion 2 &&
+	test_commit -C highbit2 c2 "$CENT" &&
+	git -C highbit2 commit-graph write --reachable --changed-paths
+'
+
+test_expect_success 'check value of version 2 changed-path' '
+	(cd highbit2 &&
+		printf "c01f" >expect &&
+		get_first_changed_path_filter >actual &&
+		test_cmp expect actual)
+'
+
+test_expect_success 'version 2 changed-path used when version 2 requested' '
+	(cd highbit2 &&
+		test_bloom_filters_used "-- $CENT")
+'
+
+test_expect_success 'version 2 changed-path not used when version 1 requested' '
+	(cd highbit2 &&
+		git config --add commitgraph.changedPathsVersion 1 &&
+		test_bloom_filters_not_used "-- $CENT")
+'
+
+test_expect_success 'version 2 changed-path used when autodetect requested' '
+	(cd highbit2 &&
+		git config --add commitgraph.changedPathsVersion -1 &&
+		test_bloom_filters_used "-- $CENT")
+'
+
+test_expect_success 'when writing another commit graph, preserve existing version 2 of changed-path' '
+	test_commit -C highbit2 c2double "$CENT$CENT" &&
+	git -C highbit2 commit-graph write --reachable --changed-paths &&
+	(cd highbit2 &&
+		git config --add commitgraph.changedPathsVersion -1 &&
+		printf "00000002" >expect &&
+		get_changed_path_filter_version >actual &&
+		test_cmp expect actual)
 '
 
 test_done
