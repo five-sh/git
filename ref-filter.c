@@ -1264,7 +1264,7 @@ static const char *find_wholine(const char *who, int wholen, const char *buf)
 	while (*buf) {
 		if (!strncmp(buf, who, wholen) &&
 		    buf[wholen] == ' ')
-			return buf + wholen + 1;
+			return buf;
 		eol = strchr(buf, '\n');
 		if (!eol)
 			return "";
@@ -1278,13 +1278,18 @@ static const char *find_wholine(const char *who, int wholen, const char *buf)
 
 static const char *copy_line(const char *buf)
 {
-	const char *eol = strchrnul(buf, '\n');
+	const char *eol;
+
+	buf = strchr(buf, ' ') + 1; /* skip who */
+	eol = strchrnul(buf, '\n');
 	return xmemdupz(buf, eol - buf);
 }
 
 static const char *copy_name(const char *buf)
 {
 	const char *cp;
+
+	buf = strchr(buf, ' ') + 1; /* skip who */
 	for (cp = buf; *cp && *cp != '\n'; cp++) {
 		if (starts_with(cp, " <"))
 			return xmemdupz(buf, cp - buf);
