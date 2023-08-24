@@ -10,6 +10,7 @@
 #include "pager.h"
 #include "revision.h"
 #include "string-list.h"
+#include "ref-filter.h"
 #include "mailmap.h"
 #include "log-tree.h"
 #include "notes.h"
@@ -1382,6 +1383,125 @@ static size_t parse_describe_args(const char *start, struct strvec *args)
 
 	}
 	return arg - start;
+}
+
+static size_t convert_format(struct strbuf *rf_buf, const char *placeholder)
+{
+	size_t res;
+
+	/*
+	 * These are independent of the commit.
+	 *
+	 * For options like %n, %x00, %x2C... that expnads to
+	 * string literals.
+	 */
+	res = strbuf_expand_literal(rf_buf, placeholder);
+	if (res)
+		return res;
+
+	/* TODO - Add support for more formatting options */
+	switch (placeholder[0]) {
+	case 'H':
+		strbuf_addstr(rf_buf, "%(objectname)");
+		return 1;
+	case 'h':
+		strbuf_addstr(rf_buf, "%(objectname:short)");
+		return 1;
+	case 'T':
+		strbuf_addstr(rf_buf, "%(tree)");
+		return 1;
+	case 't':
+		strbuf_addstr(rf_buf, "%(tree:short)");
+		return 1;
+	case 'P':
+		strbuf_addstr(rf_buf, "%(parent)");
+		return 1;
+	case 'p':
+		strbuf_addstr(rf_buf, "%(parent:short)");
+		return 1;
+	case 'a':
+		if (placeholder[1] == 'n')
+			strbuf_addstr(rf_buf, "%(authorname)");
+		else if (placeholder[1] == 'e')
+			strbuf_addstr(rf_buf, "%(authoremail:trim)");
+		else if (placeholder[1] == 'l')
+			strbuf_addstr(rf_buf, "%(authoremail:localpart)");
+		else if (placeholder[1] == 'd')
+			strbuf_addstr(rf_buf, "%(authordate)");
+		else if (placeholder[1] == 'D')
+			strbuf_addstr(rf_buf, "%(authordate:rfc)");
+		else if (placeholder[1] == 'r')
+			strbuf_addstr(rf_buf, "%(authordate:relative)");
+		else if (placeholder[1] == 't')
+			strbuf_addstr(rf_buf, "%(authordate:unix)");
+		else if (placeholder[1] == 'i')
+			strbuf_addstr(rf_buf, "%(authordate:iso)");
+		else if (placeholder[1] == 'I')
+			strbuf_addstr(rf_buf, "%(authordate:iso-strict)");
+		else if (placeholder[1] == 's')
+			strbuf_addstr(rf_buf, "%(authordate:short)");
+		else
+			return 0;
+		return 2;
+	case 'c':
+		if (placeholder[1] == 'n')
+			strbuf_addstr(rf_buf, "%(committername)");
+		else if (placeholder[1] == 'e')
+			strbuf_addstr(rf_buf, "%(committeremail:trim)");
+		else if (placeholder[1] == 'l')
+			strbuf_addstr(rf_buf, "%(committeremail:localpart)");
+		else if (placeholder[1] == 'd')
+			strbuf_addstr(rf_buf, "%(committerdate)");
+		else if (placeholder[1] == 'D')
+			strbuf_addstr(rf_buf, "%(committerdate:rfc)");
+		else if (placeholder[1] == 'r')
+			strbuf_addstr(rf_buf, "%(committerdate:relative)");
+		else if (placeholder[1] == 't')
+			strbuf_addstr(rf_buf, "%(committerdate:unix)");
+		else if (placeholder[1] == 'i')
+			strbuf_addstr(rf_buf, "%(committerdate:iso)");
+		else if (placeholder[1] == 'I')
+			strbuf_addstr(rf_buf, "%(committerdate:iso-strict)");
+		else if (placeholder[1] == 's')
+			strbuf_addstr(rf_buf, "%(committerdate:short)");
+		else
+			return 0;
+		return 2;
+	case 's':
+		strbuf_addstr(rf_buf, "%(subject)");
+		return 1;
+	case 'f':
+		strbuf_addstr(rf_buf, "%(subject:sanitize)");
+		return 1;
+	case 'b':
+		strbuf_addstr(rf_buf, "%(body)");
+		return 1;
+	case 'B':
+		strbuf_addstr(rf_buf, "%(subject)\n\n%(body)");
+		return 1;
+	}
+
+	return 0; /* unknown placeholder */
+}
+
+static size_t ref_format_commit(struct strbuf *sb,
+				const char *placeholder,
+				void *context)
+{
+	struct ref_format ref_format = REF_FORMAT_INIT;
+	struct strbuf ref_format_buf = STRBUF_INIT;
+	struct format_commit_context *c = context;
+	const char *formatted_string;
+	size_t ret = convert_format(&ref_format_buf, placeholder);
+
+	ref_format.format = ref_format_buf.buf;
+	verify_ref_format(&ref_format);
+
+	formatted_string = get_value_from_oid(&c->commit->object.oid,
+					      &ref_format);
+	strbuf_addstr(sb, formatted_string);
+
+	return ret;
 }
 
 static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
