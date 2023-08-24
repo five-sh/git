@@ -3078,6 +3078,23 @@ static void append_literal(const char *cp, const char *ep, struct ref_formatting
 	}
 }
 
+static const char *create_dummy_refname(const struct object_id *oid)
+{
+	struct strbuf ref_buf = STRBUF_INIT;
+	const char *hex = oid_to_hex(oid);
+	enum object_type type = oid_object_info(the_repository, oid, NULL);
+
+	if (type == OBJ_COMMIT)
+		strbuf_addstr(&ref_buf, "refs/heads/");
+	else if (type == OBJ_TAG)
+		strbuf_addstr(&ref_buf, "refs/tags/");
+	else
+		return xstrdup("");
+
+	strbuf_addstr(&ref_buf, hex);
+	return strbuf_detach(&ref_buf, NULL);
+}
+
 int format_ref_array_item(struct ref_array_item *info,
 			  struct ref_format *format,
 			  struct strbuf *final_buf,
@@ -3122,6 +3139,24 @@ int format_ref_array_item(struct ref_array_item *info,
 	strbuf_addbuf(final_buf, &state.stack->output);
 	pop_stack_element(&state.stack);
 	return 0;
+}
+
+const char *get_value_from_oid(const struct object_id *oid,
+			       struct ref_format *format)
+{
+	struct ref_array_item *ref_item;
+	struct strbuf output = STRBUF_INIT;
+	struct strbuf err = STRBUF_INIT;
+	const char *name = create_dummy_refname(oid);
+
+	if (!*name)
+		return name;
+
+	ref_item = new_ref_array_item(name, oid);
+	ref_item->kind = ref_kind_from_refname(name);
+	if (format_ref_array_item(ref_item, format, &output, &err))
+		die("%s", err.buf);
+	return strbuf_detach(&output, NULL);
 }
 
 void pretty_print_ref(const char *name, const struct object_id *oid,

@@ -151,6 +151,16 @@ char *get_head_description(void);
 void setup_ref_filter_porcelain_msg(void);
 
 /*
+ * Get the values for the given oid (instead of a ref), according to the
+ * given format and return the formatted string.
+ *
+ * This functions creates a dummy ref for this purpose, so if it is not
+ * able to create such a ref, then we return NUL.
+ */
+const char *get_value_from_oid(const struct object_id *oid,
+			       struct ref_format *format);
+
+/*
  * Print a single ref, outside of any ref-filter. Note that the
  * name must be a fully qualified refname.
  */
