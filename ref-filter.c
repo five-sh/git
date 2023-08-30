@@ -932,7 +932,13 @@ struct atom_value {
 	ssize_t s_size;
 	int (*handler)(struct atom_value *atomv, struct ref_formatting_state *state,
 		       struct strbuf *err);
-	uintmax_t value; /* used for sorting when not FIELD_STR */
+
+	/*
+	 * Used for sorting when not FIELD_STR or when FIELD_STR but the
+	 * sort should be numeric and not alphabetic.
+	 */
+	uintmax_t value;
+
 	struct used_atom *atom;
 };
 
@@ -1857,7 +1863,8 @@ static void grab_sub_body_contents(struct atom_value *val, int deref, struct exp
 				v->s = xmemdupz(buf, buf_size);
 				v->s_size = buf_size;
 			} else if (atom->u.raw_data.option == RAW_LENGTH) {
-				v->s = xstrfmt("%"PRIuMAX, (uintmax_t)buf_size);
+				v->value = (uintmax_t)buf_size;
+				v->s = xstrfmt("%"PRIuMAX, v->value);
 			}
 			continue;
 		}
@@ -1883,8 +1890,10 @@ static void grab_sub_body_contents(struct atom_value *val, int deref, struct exp
 			v->s = strbuf_detach(&sb, NULL);
 		} else if (atom->u.contents.option == C_BODY_DEP)
 			v->s = xmemdupz(bodypos, bodylen);
-		else if (atom->u.contents.option == C_LENGTH)
-			v->s = xstrfmt("%"PRIuMAX, (uintmax_t)strlen(subpos));
+		else if (atom->u.contents.option == C_LENGTH) {
+			v->value = (uintmax_t)strlen(subpos);
+			v->s = xstrfmt("%"PRIuMAX, v->value);
+		}
 		else if (atom->u.contents.option == C_BODY)
 			v->s = xmemdupz(bodypos, nonsiglen);
 		else if (atom->u.contents.option == C_SIG)
@@ -2265,6 +2274,7 @@ static int populate_value(struct ref_array_item *ref, struct strbuf *err)
 
 		v->s_size = ATOM_SIZE_UNSPECIFIED;
 		v->handler = append_atom;
+		v->value = 0;
 		v->atom = atom;
 
 		if (*name == '*') {
@@ -2986,7 +2996,7 @@ static int cmp_ref_sorting(struct ref_sorting *s, struct ref_array_item *a, stru
 		cmp_detached_head = 1;
 	} else if (s->sort_flags & REF_SORTING_VERSION) {
 		cmp = versioncmp(va->s, vb->s);
-	} else if (cmp_type == FIELD_STR) {
+	} else if (cmp_type == FIELD_STR && !va->value && !vb->value) {
 		if (va->s_size < 0 && vb->s_size < 0) {
 			int (*cmp_fn)(const char *, const char *);
 			cmp_fn = s->sort_flags & REF_SORTING_ICASE
