@@ -267,6 +267,20 @@ test_expect_success 'arguments to %(objectname:short=) must be positive integers
 	test_must_fail git for-each-ref --format="%(objectname:short=foo)"
 '
 
+test_bad_atom() {
+	case "$1" in
+	head) ref=refs/heads/main ;;
+	 tag) ref=refs/tags/testtag ;;
+	 sym) ref=refs/heads/sym ;;
+	   *) ref=$1 ;;
+	esac
+	printf '%s\n' "$3">expect
+	test_expect_${4:-success} $PREREQ "err basic atom: $1 $2" "
+		test_must_fail git for-each-ref --format='%($2)' $ref 2>actual &&
+		test_cmp expect actual
+	"
+}
+
 test_date () {
 	f=$1 &&
 	committer_date=$2 &&
