@@ -1679,14 +1679,32 @@ static void grab_date(const char *buf, struct atom_value *v, const char *atomnam
 
 static struct string_list mailmap = STRING_LIST_INIT_NODUP;
 
+/*
+ * Transform a buffer into its equivalent mailmap buffer.
+ *
+ * Returns a strbuf of the transformation. This buffer must be
+ * strbuf_release()'d to prevent memory leaks.
+ */
+static struct strbuf get_mailmap_buffer(const char *buf)
+{
+	struct strbuf mailmap_buf = STRBUF_INIT;
+	const char *headers[] = { "author ", "committer ",
+				  "tagger ", NULL };
+
+	if (!mailmap.items)
+		read_mailmap(&mailmap);
+	strbuf_addstr(&mailmap_buf, buf);
+	apply_mailmap_to_header(&mailmap_buf, headers, &mailmap);
+
+	return mailmap_buf;
+}
+
 /* See grab_values */
 static void grab_person(const char *who, struct atom_value *val, int deref, void *buf)
 {
 	int i;
 	int wholen = strlen(who);
 	const char *wholine = NULL;
-	const char *headers[] = { "author ", "committer ",
-				  "tagger ", NULL };
 
 	for (i = 0; i < used_atom_cnt; i++) {
 		struct used_atom *atom = &used_atom[i];
@@ -1710,10 +1728,7 @@ static void grab_person(const char *who, struct atom_value *val, int deref, void
 		    (atom->u.name_option.option == N_MAILMAP)) ||
 		    (starts_with(name + wholen, "email") &&
 		    (atom->u.email_option.option & EO_MAILMAP))) {
-			if (!mailmap.items)
-				read_mailmap(&mailmap);
-			strbuf_addstr(&mailmap_buf, buf);
-			apply_mailmap_to_header(&mailmap_buf, headers, &mailmap);
+			mailmap_buf = get_mailmap_buffer(buf);
 			wholine = find_wholine(who, wholen, mailmap_buf.buf);
 		} else {
 			wholine = find_wholine(who, wholen, buf);
