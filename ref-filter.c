@@ -21,6 +21,7 @@
 #include "quote.h"
 #include "ref-filter.h"
 #include "revision.h"
+#include "reflog-walk.h"
 #include "utf8.h"
 #include "version.h"
 #include "versioncmp.h"
@@ -156,6 +157,7 @@ enum atom_type {
 	ATOM_CONTENTS,
 	ATOM_SIGNATURE,
 	ATOM_RAW,
+	ATOM_REFLOG,
 	ATOM_UPSTREAM,
 	ATOM_PUSH,
 	ATOM_SYMREF,
@@ -232,6 +234,10 @@ static struct used_atom {
 			enum { S_BARE, S_GRADE, S_SIGNER, S_KEY,
 			       S_FINGERPRINT, S_PRI_KEY_FP, S_TRUST_LEVEL } option;
 		} signature;
+		struct {
+			enum { RL_SELECT_RAW, RL_SELECT_SHORT, RL_IDENT_NAME,
+			       RL_IDENT_EMAIL, RL_SELECT_SUBJECT } option;
+		} reflog;
 		const char **describe_args;
 		struct refname_atom refname;
 		char *head;
@@ -779,6 +785,25 @@ static int person_email_atom_parser(struct ref_format *format UNUSED,
 	return 0;
 }
 
+static int reflog_atom_parser(struct ref_format *format,
+			      struct used_atom *atom,
+			      const char *arg, struct strbuf *err)
+{
+	if (!arg)
+		atom->u.reflog.option = RL_SELECT_RAW;
+	else if (!strcmp(arg, "short"))
+		atom->u.reflog.option = RL_SELECT_SHORT;
+	else if (skip_prefix(arg, "name", &arg))
+		atom->u.reflog.option = RL_IDENT_NAME;
+	else if (skip_prefix(arg, "email", &arg))
+		atom->u.reflog.option = RL_IDENT_EMAIL;
+	else if (skip_prefix(arg, "subject", &arg))
+		atom->u.reflog.option = RL_SELECT_SUBJECT;
+	else
+		return err_bad_arg(err, atom->name, arg);
+	return 0;
+}
+
 static int refname_atom_parser(struct ref_format *format UNUSED,
 			       struct used_atom *atom,
 			       const char *arg, struct strbuf *err)
@@ -941,6 +966,7 @@ static struct {
 	[ATOM_CONTENTS] = { "contents", SOURCE_OBJ, FIELD_STR, contents_atom_parser },
 	[ATOM_SIGNATURE] = { "signature", SOURCE_OBJ, FIELD_STR, signature_atom_parser },
 	[ATOM_RAW] = { "raw", SOURCE_OBJ, FIELD_STR, raw_atom_parser },
+	[ATOM_REFLOG] = { "reflog", SOURCE_OBJ, FIELD_STR, reflog_atom_parser },
 	[ATOM_UPSTREAM] = { "upstream", SOURCE_NONE, FIELD_STR, remote_ref_atom_parser },
 	[ATOM_PUSH] = { "push", SOURCE_NONE, FIELD_STR, remote_ref_atom_parser },
 	[ATOM_SYMREF] = { "symref", SOURCE_NONE, FIELD_STR, refname_atom_parser },
@@ -1635,14 +1661,24 @@ static void grab_date(const char *buf, struct atom_value *v, const char *atomnam
 
 static struct string_list mailmap = STRING_LIST_INIT_NODUP;
 
+static void apply_mailmap_to_buffer(struct strbuf *sb, const char *buf)
+{
+	const char *headers[] = { "author ", "committer ",
+				  "tagger ", NULL };
+
+	if (!mailmap.items)
+		read_mailmap(&mailmap);
+	strbuf_addstr(sb, buf);
+
+	apply_mailmap_to_header(sb, headers, &mailmap);
+}
+
 /* See grab_values */
 static void grab_person(const char *who, struct atom_value *val, int deref, void *buf)
 {
 	int i;
 	int wholen = strlen(who);
 	const char *wholine = NULL;
-	const char *headers[] = { "author ", "committer ",
-				  "tagger ", NULL };
 
 	for (i = 0; i < used_atom_cnt; i++) {
 		struct used_atom *atom = &used_atom[i];
@@ -1666,10 +1702,7 @@ static void grab_person(const char *who, struct atom_value *val, int deref, void
 		    (atom->u.name_option.option == N_MAILMAP)) ||
 		    (starts_with(name + wholen, "email") &&
 		    (atom->u.email_option.option & EO_MAILMAP))) {
-			if (!mailmap.items)
-				read_mailmap(&mailmap);
-			strbuf_addstr(&mailmap_buf, buf);
-			apply_mailmap_to_header(&mailmap_buf, headers, &mailmap);
+			apply_mailmap_to_buffer(&mailmap_buf, buf);
 			wholine = find_wholine(who, wholen, mailmap_buf.buf);
 		} else {
 			wholine = find_wholine(who, wholen, buf);
@@ -1998,6 +2031,83 @@ static void grab_sub_body_contents(struct atom_value *val, int deref, struct exp
 	free((void *)sigpos);
 }
 
+
+static void grab_reflog_values(struct atom_value *val, int deref,
+			       struct object *obj, const char *refname)
+{
+	struct reflog_walk_info *reflog_info = NULL;
+	int i;
+
+	for (i = 0; i < used_atom_cnt; i++) {
+		struct used_atom *atom = &used_atom[i];
+		const char *name = atom->name;
+		int opt = atom->u.reflog.option;
+		struct atom_value *v = &val[i];
+
+		struct strbuf out = STRBUF_INIT;
+		const char *buf = NULL;
+		const char *arg = NULL;
+		struct strbuf mailmap_buf = STRBUF_INIT;
+		struct date_mode dmode = DATE_MODE_INIT;
+
+		if (!!deref != (*name == '*'))
+			continue;
+		if (deref)
+			name++;
+
+		if (!skip_prefix(name, "reflog", &arg) ||
+		    (*arg && *arg != ':'))
+			continue;
+		if (!*arg)
+			arg = NULL;
+		else
+			arg++;
+
+		if (!reflog_info)
+			init_reflog_walk(&reflog_info);
+		add_reflog_for_walk(reflog_info,
+				    (struct commit *)obj, refname);
+		next_reflog_entry(reflog_info);
+
+		switch (opt) {
+		case RL_SELECT_RAW:
+		case RL_SELECT_SHORT:
+			get_reflog_selector(&out,
+					    reflog_info, &dmode, 1,
+					    (opt == RL_SELECT_SHORT));
+			break;
+		case RL_IDENT_NAME:
+			atom->u.name_option.option = N_RAW;
+			buf = get_reflog_ident(reflog_info);
+
+			if (skip_prefix(arg, "name,", &arg) &&
+			    !strcmp(arg, "mailmap")) {
+				apply_mailmap_to_buffer(&mailmap_buf, buf);
+				buf = mailmap_buf.buf;
+			}
+			strbuf_addstr(&out, copy_name(buf));
+			break;
+		case RL_IDENT_EMAIL:
+			atom->u.email_option.option = EO_RAW;
+			buf = get_reflog_ident(reflog_info);
+
+			if (skip_prefix(arg, "email,", &arg) &&
+			    !strcmp(arg, "mailmap")) {
+				apply_mailmap_to_buffer(&mailmap_buf, buf);
+				buf = mailmap_buf.buf;
+			}
+			strbuf_addstr(&out, copy_email(buf, atom));
+			break;
+		case RL_SELECT_SUBJECT:
+			get_reflog_message(&out, reflog_info);
+			break;
+		}
+		strbuf_release(&mailmap_buf);
+
+		v->s = strbuf_detach(&out, NULL);
+	}
+}
+
 /*
  * We want to have empty print-string for field requests
  * that do not apply (e.g. "authordate" for a tag object)
@@ -2019,7 +2129,9 @@ static void fill_missing_values(struct atom_value *val)
  * pointed at by the ref itself; otherwise it is the object the
  * ref (which is a tag) refers to.
  */
-static void grab_values(struct atom_value *val, int deref, struct object *obj, struct expand_data *data)
+static void grab_values(struct atom_value *val, int deref,
+			struct object *obj, struct expand_data *data,
+			const char *refname)
 {
 	void *buf = data->content;
 
@@ -2037,6 +2149,7 @@ static void grab_values(struct atom_value *val, int deref, struct object *obj, s
 		grab_person("committer", val, deref, buf);
 		grab_signature(val, deref, obj);
 		grab_describe_values(val, deref, obj);
+		grab_reflog_values(val, deref, obj, refname);
 		break;
 	case OBJ_TREE:
 		/* grab_tree_values(val, deref, obj, buf, sz); */
@@ -2268,7 +2381,7 @@ static int get_object(struct ref_array_item *ref, int deref, struct object **obj
 			return strbuf_addf_ret(err, -1, _("parse_object_buffer failed on %s for %s"),
 					       oid_to_hex(&oi->oid), ref->refname);
 		}
-		grab_values(ref->value, deref, *obj, oi);
+		grab_values(ref->value, deref, *obj, oi, ref->refname);
 	}
 
 	grab_common_values(ref->value, deref, oi);
