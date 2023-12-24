@@ -2049,4 +2049,140 @@ test_expect_success GPG 'show lack of signature with custom format' '
 	test_cmp expect actual
 '
 
+test_expect_success 'setup for reflog atom' '
+	git checkout -b t-reflog &&
+
+	# create reflog entries
+	test_commit --no-tag "subj1: msg1" &&
+	test_commit --no-tag "subj2: msg2" &&
+	test_commit --no-tag "subj3: msg3" &&
+	git commit --amend -m "subj3: msg4" &&
+	git reset --hard HEAD^
+'
+
+test_expect_success 'raw reflog atom' '
+	cat >expect <<-\EOF &&
+	refs/heads/t-reflog@{0}
+	refs/heads/t-reflog@{1}
+	refs/heads/t-reflog@{2}
+	refs/heads/t-reflog@{3}
+	refs/heads/t-reflog@{4}
+	refs/heads/t-reflog@{5}
+	EOF
+	git for-each-ref --format="%(reflog)" refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'raw reflog with date format' '
+	cat >expect <<-\EOF &&
+	refs/heads/t-reflog@{Apr 7 2005}
+	refs/heads/t-reflog@{Apr 7 2005}
+	refs/heads/t-reflog@{Apr 7 2005}
+	refs/heads/t-reflog@{Apr 7 2005}
+	refs/heads/t-reflog@{Apr 7 2005}
+	refs/heads/t-reflog@{Apr 7 2005}
+	EOF
+	git for-each-ref --format="%(reflog:date=human)" \
+		refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'short reflog atom' '
+	cat >expect <<-\EOF &&
+	t-reflog@{0}
+	t-reflog@{1}
+	t-reflog@{2}
+	t-reflog@{3}
+	t-reflog@{4}
+	t-reflog@{5}
+	EOF
+	git for-each-ref --format="%(reflog:short)" \
+		refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'short reflog with date format' '
+	cat >expect <<-\EOF &&
+	t-reflog@{19 years ago}
+	t-reflog@{19 years ago}
+	t-reflog@{19 years ago}
+	t-reflog@{19 years ago}
+	t-reflog@{19 years ago}
+	t-reflog@{19 years ago}
+	EOF
+	git for-each-ref --format="%(reflog:short,date=relative)" \
+		refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'reflog ident name atom' '
+	cat >expect <<-\EOF &&
+	C O Mitter
+	C O Mitter
+	C O Mitter
+	C O Mitter
+	C O Mitter
+	C O Mitter
+	EOF
+	git for-each-ref --format="%(reflog:name)" \
+		refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'reflog ident name,mailmap atom' '
+	cat >expect <<-\EOF &&
+	C Mitter
+	C Mitter
+	C Mitter
+	C Mitter
+	C Mitter
+	C Mitter
+	EOF
+	git for-each-ref --format="%(reflog:name,mailmap)" \
+		refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'reflog ident email atom' '
+	cat >expect <<-\EOF &&
+	<committer@example.com>
+	<committer@example.com>
+	<committer@example.com>
+	<committer@example.com>
+	<committer@example.com>
+	<committer@example.com>
+	EOF
+	git for-each-ref --format="%(reflog:email)" \
+		refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'reflog ident email,mailmap atom' '
+	cat >expect <<-\EOF &&
+	<cmitter@example.com>
+	<cmitter@example.com>
+	<cmitter@example.com>
+	<cmitter@example.com>
+	<cmitter@example.com>
+	<cmitter@example.com>
+	EOF
+	git for-each-ref --format="%(reflog:email,mailmap)" \
+		refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'reflog subject atom' '
+	cat >expect <<-\EOF &&
+	reset: moving to HEAD^
+	commit (amend): subj3: msg4
+	commit: subj3: msg3
+	commit: subj2: msg2
+	commit: subj1: msg1
+	branch: Created from HEAD
+	EOF
+	git for-each-ref --format="%(reflog:subject)" \
+		refs/heads/t-reflog >actual &&
+	test_cmp expect actual
+'
+
 test_done
