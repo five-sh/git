@@ -24,6 +24,7 @@
 #include "quote.h"
 #include "ref-filter.h"
 #include "revision.h"
+#include "reflog-walk.h"
 #include "utf8.h"
 #include "versioncmp.h"
 #include "trailer.h"
@@ -156,6 +157,7 @@ enum atom_type {
 	ATOM_CONTENTS,
 	ATOM_SIGNATURE,
 	ATOM_RAW,
+	ATOM_REFLOG,
 	ATOM_UPSTREAM,
 	ATOM_PUSH,
 	ATOM_SYMREF,
@@ -234,6 +236,18 @@ static struct used_atom {
 			enum { S_BARE, S_GRADE, S_SIGNER, S_KEY,
 			       S_FINGERPRINT, S_PRI_KEY_FP, S_TRUST_LEVEL } option;
 		} signature;
+		struct {
+			enum {
+				RL_RAW = 1 << 0,
+				RL_SHORT = 1 << 1,
+				RL_IDENT_NAME = 1 << 2,
+				RL_IDENT_EMAIL = 1 << 3,
+				RL_SUBJECT = 1 << 4,
+				RL_DATE = 1 << 5,
+			} option;
+			struct date_mode dmode;
+			struct reflog_walk_info *reflog_info;
+		} reflog_option;
 		struct strvec describe_args;
 		struct refname_atom refname;
 		char *head;
@@ -558,6 +572,57 @@ static int signature_atom_parser(struct ref_format *format UNUSED,
 	if (opt < 0)
 		return err_bad_arg(err, "signature", arg);
 	atom->u.signature.option = opt;
+	return 0;
+}
+
+static int reflog_atom_option_parser(const char **arg,
+				     struct used_atom *atom)
+{
+	const char *optval = NULL;
+	size_t optlen = 0;
+
+	if (!*arg)
+		return RL_RAW;
+	else if (skip_prefix(*arg, "short", arg))
+		return RL_SHORT;
+	else if (skip_prefix(*arg, "name", arg))
+		return RL_IDENT_NAME;
+	else if (skip_prefix(*arg, "email", arg))
+		return RL_IDENT_EMAIL;
+	else if (skip_prefix(*arg, "subject", arg))
+		return RL_SUBJECT;
+	else if (match_atom_arg_value(*arg, "date", arg,
+				      &optval, &optlen)) {
+		struct date_mode dmode = DATE_MODE_INIT;
+
+		if (!optval || !*optval)
+			die(_("no date format value is given"));
+		parse_date_format(optval, &dmode);
+		atom->u.reflog_option.dmode = dmode;
+		return RL_DATE;
+	}
+	return -1;
+}
+
+static int reflog_atom_parser(struct ref_format *format UNUSED,
+			      struct used_atom *atom,
+			      const char *arg, struct strbuf *err)
+{
+	for (;;) {
+		int opt = reflog_atom_option_parser(&arg, atom);
+		const char *bad_arg = arg;
+
+		if (opt < 0)
+			return err_bad_arg(err, atom->name, bad_arg);
+		atom->u.reflog_option.option |= opt;
+
+		if (!arg || !*arg)
+			break;
+		if (*arg == ',')
+			arg++;
+		else
+			return err_bad_arg(err, atom->name, bad_arg);
+	}
 	return 0;
 }
 
@@ -975,6 +1040,7 @@ static struct {
 	[ATOM_CONTENTS] = { "contents", SOURCE_OBJ, FIELD_STR, contents_atom_parser },
 	[ATOM_SIGNATURE] = { "signature", SOURCE_OBJ, FIELD_STR, signature_atom_parser },
 	[ATOM_RAW] = { "raw", SOURCE_OBJ, FIELD_STR, raw_atom_parser },
+	[ATOM_REFLOG] = { "reflog", SOURCE_OBJ, FIELD_STR, reflog_atom_parser },
 	[ATOM_UPSTREAM] = { "upstream", SOURCE_NONE, FIELD_STR, remote_ref_atom_parser },
 	[ATOM_PUSH] = { "push", SOURCE_NONE, FIELD_STR, remote_ref_atom_parser },
 	[ATOM_SYMREF] = { "symref", SOURCE_NONE, FIELD_STR, refname_atom_parser },
@@ -2098,6 +2164,58 @@ static void grab_values(struct atom_value *val, int deref, struct object *obj, s
 	}
 }
 
+static void grab_reflog_values_one(struct strbuf *out,
+				   struct used_atom *atom,
+				   struct reflog_walk_info *info)
+{
+	int opt = atom->u.reflog_option.option;
+
+	if (opt & (RL_RAW | RL_SHORT | RL_DATE))
+		get_reflog_selector(out, info,
+				    atom->u.reflog_option.dmode,
+				    (opt & RL_DATE), (opt & RL_SHORT));
+
+	if (opt & RL_IDENT_NAME)
+		strbuf_addstr(out, copy_name(get_reflog_ident(info)));
+
+	if (opt & RL_IDENT_EMAIL)
+		strbuf_addstr(out,
+			      copy_email(get_reflog_ident(info), atom));
+
+	if (opt & RL_SUBJECT)
+		get_reflog_message(out, info);
+
+	strbuf_addch(out, '\n');
+}
+
+static void grab_reflog_values(struct atom_value *val, struct object *obj,
+			       char *refname)
+{
+	int i;
+
+	for (i = 0; i < used_atom_cnt; i++) {
+		struct used_atom *atom = &used_atom[i];
+		struct atom_value *v = &val[i];
+		struct reflog_walk_info *info =
+				atom->u.reflog_option.reflog_info;
+		struct strbuf out = STRBUF_INIT;
+
+		if (atom->atom_type != ATOM_REFLOG)
+			continue;
+
+		if (!info)
+			init_reflog_walk(&info);
+		add_reflog_for_walk(info, (struct commit *)obj, refname);
+
+		while (next_reflog_entry(info))
+			grab_reflog_values_one(&out, atom, info);
+		strbuf_trim_trailing_newline(&out);
+
+		v->s = strbuf_detach(&out, NULL);
+		reflog_walk_info_release(info);
+	}
+}
+
 static inline char *copy_advance(char *dst, const char *src)
 {
 	while (*src)
@@ -2318,6 +2436,7 @@ static int get_object(struct ref_array_item *ref, int deref, struct object **obj
 					       oid_to_hex(&oi->oid), ref->refname);
 		}
 		grab_values(ref->value, deref, *obj, oi);
+		grab_reflog_values(ref->value, *obj, ref->refname);
 	}
 
 	grab_common_values(ref->value, deref, oi);
