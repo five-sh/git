@@ -21,6 +21,7 @@
 #include "quote.h"
 #include "ref-filter.h"
 #include "revision.h"
+#include "reflog-walk.h"
 #include "utf8.h"
 #include "versioncmp.h"
 #include "trailer.h"
@@ -153,6 +154,7 @@ enum atom_type {
 	ATOM_CONTENTS,
 	ATOM_SIGNATURE,
 	ATOM_RAW,
+	ATOM_REFLOG,
 	ATOM_UPSTREAM,
 	ATOM_PUSH,
 	ATOM_SYMREF,
@@ -229,6 +231,10 @@ static struct used_atom {
 			enum { S_BARE, S_GRADE, S_SIGNER, S_KEY,
 			       S_FINGERPRINT, S_PRI_KEY_FP, S_TRUST_LEVEL } option;
 		} signature;
+		struct {
+			enum { RL_SELECT_RAW, RL_SELECT_SHORT, RL_IDENT_NAME,
+			       RL_IDENT_EMAIL, RL_SELECT_SUBJECT } option;
+		} reflog;
 		const char **describe_args;
 		struct refname_atom refname;
 		char *head;
@@ -775,6 +781,25 @@ static int person_email_atom_parser(struct ref_format *format UNUSED,
 	return 0;
 }
 
+static int reflog_atom_parser(struct ref_format *format,
+			      struct used_atom *atom,
+			      const char *arg, struct strbuf *err)
+{
+	if (!arg)
+		atom->u.reflog.option = RL_SELECT_RAW;
+	else if (!strcmp(arg, "short"))
+		atom->u.reflog.option = RL_SELECT_SHORT;
+	else if (skip_prefix(arg, "name", &arg))
+		atom->u.reflog.option = RL_IDENT_NAME;
+	else if (skip_prefix(arg, "email", &arg))
+		atom->u.reflog.option = RL_IDENT_EMAIL;
+	else if (skip_prefix(arg, "subject", &arg))
+		atom->u.reflog.option = RL_SELECT_SUBJECT;
+	else
+		return err_bad_arg(err, atom->name, arg);
+	return 0;
+}
+
 static int refname_atom_parser(struct ref_format *format UNUSED,
 			       struct used_atom *atom,
 			       const char *arg, struct strbuf *err)
@@ -937,6 +962,7 @@ static struct {
 	[ATOM_CONTENTS] = { "contents", SOURCE_OBJ, FIELD_STR, contents_atom_parser },
 	[ATOM_SIGNATURE] = { "signature", SOURCE_OBJ, FIELD_STR, signature_atom_parser },
 	[ATOM_RAW] = { "raw", SOURCE_OBJ, FIELD_STR, raw_atom_parser },
+	[ATOM_REFLOG] = { "reflog", SOURCE_OBJ, FIELD_STR, reflog_atom_parser },
 	[ATOM_UPSTREAM] = { "upstream", SOURCE_NONE, FIELD_STR, remote_ref_atom_parser },
 	[ATOM_PUSH] = { "push", SOURCE_NONE, FIELD_STR, remote_ref_atom_parser },
 	[ATOM_SYMREF] = { "symref", SOURCE_NONE, FIELD_STR, refname_atom_parser },
@@ -1994,6 +2020,125 @@ static void grab_sub_body_contents(struct atom_value *val, int deref, struct exp
 	free((void *)sigpos);
 }
 
+static void populate_reflog_values(struct strbuf *out,
+				   struct used_atom *atom,
+				   struct reflog_walk_info *reflog_info,
+				   const char *arg)
+{
+	int opt = atom->u.reflog.option;
+
+	if (arg) {
+		/*
+		 * It doesn't matter if these skip_prefix()'es fail
+		 * because all we are doing here is to check if we have
+		 * any additional options in our format string.
+		 */
+		skip_prefix(arg, "name,", &arg);
+		skip_prefix(arg, "email,", &arg);
+	}
+
+	for (;;) {
+		struct commit *c = next_reflog_entry(reflog_info);
+		struct strbuf mailmap_buf = STRBUF_INIT;
+		const char *buf = NULL;
+
+		if (!c) {
+			strbuf_trim_trailing_newline(out);
+			return;
+		}
+
+		switch (opt) {
+		case RL_SELECT_RAW:
+		case RL_SELECT_SHORT:
+			get_reflog_selector(out,
+					    reflog_info, NULL, 0,
+					    (opt == RL_SELECT_SHORT));
+			break;
+		case RL_IDENT_NAME:
+			atom->u.name_option.option = N_RAW;
+			buf = get_reflog_ident(reflog_info);
+
+			if (!buf)
+				break;
+
+			if (!strcmp(arg, "mailmap")) {
+				if (!mailmap.items)
+					read_mailmap(&mailmap);
+				strbuf_addstr(&mailmap_buf, buf);
+				apply_mailmap_to_ident_line(&mailmap_buf,
+							    &mailmap);
+				buf = mailmap_buf.buf;
+			}
+			strbuf_addstr(out, copy_name(buf));
+			break;
+		case RL_IDENT_EMAIL:
+			atom->u.email_option.option = EO_RAW;
+			buf = get_reflog_ident(reflog_info);
+
+			if (!buf)
+				break;
+
+			if (!strcmp(arg, "mailmap")) {
+				if (!mailmap.items)
+					read_mailmap(&mailmap);
+				strbuf_addstr(&mailmap_buf, buf);
+				apply_mailmap_to_ident_line(&mailmap_buf,
+							    &mailmap);
+				buf = mailmap_buf.buf;
+			}
+			strbuf_addstr(out, copy_email(buf, atom));
+			break;
+		case RL_SELECT_SUBJECT:
+			get_reflog_message(out, reflog_info);
+			break;
+		}
+		if (*mailmap_buf.buf)
+			strbuf_release(&mailmap_buf);
+
+		strbuf_addch(out, '\n');
+	}
+}
+
+static void grab_reflog_values(struct atom_value *val, int deref,
+			       struct object *obj, const char *refname)
+{
+	struct reflog_walk_info *reflog_info = NULL;
+	int i;
+
+	for (i = 0; i < used_atom_cnt; i++) {
+		struct used_atom *atom = &used_atom[i];
+		const char *name = atom->name;
+		struct atom_value *v = &val[i];
+		const char *arg = NULL;
+
+		struct strbuf out = STRBUF_INIT;
+
+		if (!!deref != (*name == '*'))
+			continue;
+		if (deref)
+			name++;
+
+		/* grab the arg for using it later */
+		if (!skip_prefix(name, "reflog", &arg) ||
+		    (*arg && *arg != ':'))
+			continue;
+		if (!*arg)
+			arg = NULL;
+		else
+			arg++;
+
+		if (reflog_walk_empty(reflog_info))
+			init_reflog_walk(&reflog_info);
+
+		add_reflog_for_walk(reflog_info,
+				    (struct commit *)obj, refname);
+		populate_reflog_values(&out, atom, reflog_info, arg);
+		reflog_walk_info_release(reflog_info);
+
+		v->s = strbuf_detach(&out, NULL);
+	}
+}
+
 /*
  * We want to have empty print-string for field requests
  * that do not apply (e.g. "authordate" for a tag object)
@@ -2015,7 +2160,9 @@ static void fill_missing_values(struct atom_value *val)
  * pointed at by the ref itself; otherwise it is the object the
  * ref (which is a tag) refers to.
  */
-static void grab_values(struct atom_value *val, int deref, struct object *obj, struct expand_data *data)
+static void grab_values(struct atom_value *val, int deref,
+			struct object *obj, struct expand_data *data,
+			const char *refname)
 {
 	void *buf = data->content;
 
@@ -2033,6 +2180,7 @@ static void grab_values(struct atom_value *val, int deref, struct object *obj, s
 		grab_person("committer", val, deref, buf);
 		grab_signature(val, deref, obj);
 		grab_describe_values(val, deref, obj);
+		grab_reflog_values(val, deref, obj, refname);
 		break;
 	case OBJ_TREE:
 		/* grab_tree_values(val, deref, obj, buf, sz); */
@@ -2264,7 +2412,7 @@ static int get_object(struct ref_array_item *ref, int deref, struct object **obj
 			return strbuf_addf_ret(err, -1, _("parse_object_buffer failed on %s for %s"),
 					       oid_to_hex(&oi->oid), ref->refname);
 		}
-		grab_values(ref->value, deref, *obj, oi);
+		grab_values(ref->value, deref, *obj, oi, ref->refname);
 	}
 
 	grab_common_values(ref->value, deref, oi);

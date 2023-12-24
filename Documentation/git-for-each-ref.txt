@@ -284,6 +284,40 @@ exclude=<pattern>;;
 	in linkgit:git-describe[1] for details.
 --
 
+reflog::
+	reflog selector, e.g., `refs/heads/master@{Sat Dec 23 07:44:50 2023 +0530}`.
+	The portion before the @ is the refname as given on the command line.
+	In case of the above example, it being `refs/heads/master`.
+
+reflog:short::
+	reflog selector with short ref name, e.g.,
+	`master@{Sat Dec 23 07:44:50 2023 +0530}`.
+
+reflog:name[,<options>]::
+	reflog identity name.
++
+--
+mailmap;;
+	reflog identity name, but with mailmap applied (see
+	linkgit:gitmailmap[5]).
+--
+
+reflog:email[,<options>]::
+	reflog identity email.
++
+--
+trim;;
+	not implemented yet.
+localpart;;
+	not implemented yet.
+mailmap;;
+	reflog identity email, but with mailmap applied (see
+	linkgit:gitmailmap[5]).
+--
+
+reflog:subject::
+	reflog selector subject.
+
 In addition to the above, for commit and tag objects, the header
 field names (`tree`, `parent`, `object`, `type`, and `tag`) can
 be used to specify the value in the header field.
