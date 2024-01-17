@@ -389,6 +389,12 @@ static ssize_t rewrite_ident_line(const char *person, size_t len,
 	return 0;
 }
 
+ssize_t apply_mailmap_to_ident_line(struct strbuf *buf,
+				    struct string_list *mailmap)
+{
+	return rewrite_ident_line(buf->buf, buf->len, buf, mailmap);
+}
+
 void apply_mailmap_to_header(struct strbuf *buf, const char **header,
 			       struct string_list *mailmap)
 {

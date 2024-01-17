@@ -38,6 +38,15 @@ void reset_ident_date(void);
 int split_ident_line(struct ident_split *, const char *, int);
 
 /*
+ * Given a buffer of the form "name <email>", apply mailmap to it.
+ * Internally, the buffer is parsed with the help of split_ident_line().
+ *
+ * Returns the new length of the buffer on success and 0 otherwise.
+ */
+ssize_t apply_mailmap_to_ident_line(struct strbuf *buf,
+				    struct string_list *mailmap);
+
+/*
  * Given a commit or tag object buffer and the commit or tag headers, replaces
  * the idents in the headers with their canonical versions using the mailmap mechanism.
  */
