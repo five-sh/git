@@ -778,6 +778,64 @@ static inline bool strip_suffix(const char *str, const char *suffix,
 	return strip_suffix_mem(str, len, suffix);
 }
 
+/*
+ * Parse option of name "candidate" in the option string "to_parse" of
+ * the form
+ *
+ *	"candidate1[=val1],candidate2[=val2],candidate3[=val3],..."
+ *
+ * or
+ *
+ *	"candidate1[=val1],candidate2[=val2],candidate3[=val3],...)"
+ *
+ * The remaining part of "to_parse" is stored in "end" (if we are
+ * parsing the last candidate, then this is NULL) and the value of
+ * the candidate is stored in "valuestart" and its length in "valuelen",
+ * that is the portion after "=". Since it is possible for a "candidate"
+ * to not have a value, in such cases, "valuestart" is set to point to
+ * NULL and "valuelen" to 0.
+ *
+ * The function returns 1 on success. It returns 0 if we don't find
+ * "candidate" in "to_parse" or we find "candidate" but it is followed
+ * by more chars (for example, "candidatefoo"), that is, we don't find
+ * an exact match.
+ *
+ * This function only does the above for one "candidate" at a time. So
+ * it has to be called each time trying to parse a "candidate" in the
+ * option string "to_parse".
+ */
+int match_format_arg_value(const char *to_parse, const char *candidate,
+			   const char **end, const char **valuestart,
+			   size_t *valuelen);
+
+/*
+ * Parse boolean option of name "candidate" in the option list "to_parse"
+ * of the form
+ *
+ *	"candidate1[=val1],candidate2[=val2],candidate3[=val3],..."
+ *
+ * or
+ *
+ *	"candidate1[=val1],candidate2[=val2],candidate3[=val3],...)"
+ *
+ * The remaining part of "to_parse" is stored in "end" (if we are parsing
+ * the last candidate, then this is NULL) and the value (if given) is
+ * parsed and stored in "val", so "val" always points to either 0 or 1.
+ * If the value is not given, then "val" is set to point to 1.
+ *
+ * The boolean value is parsed using "git_parse_maybe_bool()", so the
+ * accepted values are
+ *
+ *	to set true  - "1", "yes", "true"
+ *	to set false - "0", "no", "false"
+ *
+ * This function returns 1 on success. It returns 0 when we don't find
+ * an exact match for "candidate" or when the boolean value given is
+ * not valid.
+ */
+int match_format_bool_arg(const char *to_parse, const char *candidate,
+			  const char **end, int *val);
+
 #define SWAP(a, b) do {						\
 	void *_swap_a_ptr = &(a);				\
 	void *_swap_b_ptr = &(b);				\
