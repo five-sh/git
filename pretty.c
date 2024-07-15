@@ -1186,46 +1186,48 @@ static size_t parse_padding_placeholder(const char *placeholder,
 	return 0;
 }
 
-static int match_placeholder_arg_value(const char *to_parse, const char *candidate,
-				       const char **end, const char **valuestart,
-				       size_t *valuelen)
+int match_format_arg_value(const char *to_parse, const char *candidate,
+			   const char **end, const char **valuestart,
+			   size_t *valuelen)
 {
 	const char *p;
 
 	if (!(skip_prefix(to_parse, candidate, &p)))
 		return 0;
-	if (valuestart) {
-		if (*p == '=') {
-			*valuestart = p + 1;
-			*valuelen = strcspn(*valuestart, ",)");
-			p = *valuestart + *valuelen;
-		} else {
-			if (*p != ',' && *p != ')')
-				return 0;
-			*valuestart = NULL;
-			*valuelen = 0;
-		}
+
+	if (*p == '=') {
+		*valuestart = p + 1;
+
+		p = strchr(*valuestart, ',');
+		if (!p)
+			p = strchrnul(*valuestart, ')');
+
+		*valuelen = p - *valuestart;
+	} else if (*p != ',' && *p != ')' && *p != '\0') {
+			return 0;
+	} else {
+		*valuestart = NULL;
+		*valuelen = 0;
 	}
-	if (*p == ',') {
-		*end = p + 1;
-		return 1;
-	}
-	if (*p == ')') {
-		*end = p;
-		return 1;
-	}
-	return 0;
+
+	if (*p == ',')
+		p++;
+	else if (*p != ')' && *p)
+		BUG("Why is p not NULL yet?");
+
+	*end = p;
+	return 1;
 }
 
-static int match_placeholder_bool_arg(const char *to_parse, const char *candidate,
-				      const char **end, int *val)
+int match_format_bool_arg(const char *to_parse, const char *candidate,
+			  const char **end, int *val)
 {
 	const char *argval;
 	char *strval;
 	size_t arglen;
 	int v;
 
-	if (!match_placeholder_arg_value(to_parse, candidate, end, &argval, &arglen))
+	if (!match_format_arg_value(to_parse, candidate, end, &argval, &arglen))
 		return 0;
 
 	if (!argval) {
@@ -1293,7 +1295,7 @@ int format_set_trailers_options(struct process_trailer_options *opts,
 		if (**arg == ')')
 			break;
 
-		if (match_placeholder_arg_value(*arg, "key", arg, &argval, &arglen)) {
+		if (match_format_arg_value(*arg, "key", arg, &argval, &arglen)) {
 			uintptr_t len = arglen;
 
 			if (!argval)
@@ -1306,14 +1308,14 @@ int format_set_trailers_options(struct process_trailer_options *opts,
 			opts->filter = format_trailer_match_cb;
 			opts->filter_data = filter_list;
 			opts->only_trailers = 1;
-		} else if (match_placeholder_arg_value(*arg, "separator", arg, &argval, &arglen)) {
+		} else if (match_format_arg_value(*arg, "separator", arg, &argval, &arglen)) {
 			opts->separator = expand_string_arg(sepbuf, argval, arglen);
-		} else if (match_placeholder_arg_value(*arg, "key_value_separator", arg, &argval, &arglen)) {
+		} else if (match_format_arg_value(*arg, "key_value_separator", arg, &argval, &arglen)) {
 			opts->key_value_separator = expand_string_arg(kvsepbuf, argval, arglen);
-		} else if (!match_placeholder_bool_arg(*arg, "only", arg, &opts->only_trailers) &&
-			   !match_placeholder_bool_arg(*arg, "unfold", arg, &opts->unfold) &&
-			   !match_placeholder_bool_arg(*arg, "keyonly", arg, &opts->key_only) &&
-			   !match_placeholder_bool_arg(*arg, "valueonly", arg, &opts->value_only)) {
+		} else if (!match_format_bool_arg(*arg, "only", arg, &opts->only_trailers) &&
+			   !match_format_bool_arg(*arg, "unfold", arg, &opts->unfold) &&
+			   !match_format_bool_arg(*arg, "keyonly", arg, &opts->key_only) &&
+			   !match_format_bool_arg(*arg, "valueonly", arg, &opts->value_only)) {
 			if (invalid_arg) {
 				size_t len = strcspn(*arg, ",)");
 				*invalid_arg = xstrndup(*arg, len);
@@ -1351,7 +1353,7 @@ static size_t parse_describe_args(const char *start, struct strvec *args)
 		for (i = 0; !found && i < ARRAY_SIZE(option); i++) {
 			switch (option[i].type) {
 			case DESCRIBE_ARG_BOOL:
-				if (match_placeholder_bool_arg(arg, option[i].name, &arg, &optval)) {
+				if (match_format_bool_arg(arg, option[i].name, &arg, &optval)) {
 					if (optval)
 						strvec_pushf(args, "--%s", option[i].name);
 					else
@@ -1360,7 +1362,7 @@ static size_t parse_describe_args(const char *start, struct strvec *args)
 				}
 				break;
 			case DESCRIBE_ARG_INTEGER:
-				if (match_placeholder_arg_value(arg, option[i].name, &arg,
+				if (match_format_arg_value(arg, option[i].name, &arg,
 								&argval, &arglen)) {
 					char *endptr;
 					if (!arglen)
@@ -1373,7 +1375,7 @@ static size_t parse_describe_args(const char *start, struct strvec *args)
 				}
 				break;
 			case DESCRIBE_ARG_STRING:
-				if (match_placeholder_arg_value(arg, option[i].name, &arg,
+				if (match_format_arg_value(arg, option[i].name, &arg,
 								&argval, &arglen)) {
 					if (!arglen)
 						return 0;
@@ -1398,7 +1400,7 @@ static int parse_decoration_option(const char **arg,
 	const char *argval;
 	size_t arglen;
 
-	if (match_placeholder_arg_value(*arg, name, arg, &argval, &arglen)) {
+	if (match_format_arg_value(*arg, name, arg, &argval, &arglen)) {
 		struct strbuf sb = STRBUF_INIT;
 
 		expand_string_arg(&sb, argval, arglen);
