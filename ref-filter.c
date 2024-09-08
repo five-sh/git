@@ -1375,6 +1375,8 @@ int verify_ref_format(struct ref_format *format)
 
 		if (!ep)
 			return error(_("malformed format string %s"), sp);
+		if (*(ep + 1) && !isspace(*(ep + 1)) && *(ep + 1) != '%')
+			ep = strchr(ep + 1, ')');
 		/* sp points at "%(" and ep points at the closing ")" */
 		at = parse_ref_filter_atom(format, sp + 2, ep, &err);
 		if (at < 0)
@@ -3416,6 +3418,8 @@ int format_ref_array_item(struct ref_array_item *info,
 		int pos;
 
 		ep = strchr(sp, ')');
+		if (*(ep + 1) && !isspace(*(ep + 1)) && *(ep + 1) != '%')
+			ep = strchr(ep + 1, ')');
 		if (cp < sp)
 			append_literal(cp, sp, &state);
 		pos = parse_ref_filter_atom(format, sp + 2, ep, error_buf);
