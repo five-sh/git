@@ -271,6 +271,45 @@ static int err_bad_arg(struct strbuf *sb, const char *name, const char *arg)
 	return -1;
 }
 
+int match_format_arg_value(const char *to_parse, const char *candidate,
+			   const char **end, const char **valuestart,
+			   size_t *valuelen, char term_char)
+{
+	const char *p;
+
+	if (!skip_prefix(to_parse, candidate, &p))
+		return 0; /* definitely not "candidate" */
+
+	if (*p == '=') {
+		/* we just saw "candidate=" */
+		*valuestart = p + 1;
+
+		p = strchr(*valuestart, ',');
+		if (!p)
+			p = strchr(*valuestart, term_char);
+
+		*valuelen = p - *valuestart;
+	} else if (*p != ',' && *p != term_char) {
+		/* key begins with "candidate" but has more chars not term_char */
+		return 0;
+	} else {
+		/* just "candidate" without "=val" */
+		*valuestart = NULL;
+		*valuelen = 0;
+	}
+
+	/* p points at either the ',' or term_char after this key[=val] */
+	if (*p == ',') {
+		*end = p + 1;
+		return 1;
+	}
+	if (*p == term_char) {
+		*end = p;
+		return 1;
+	}
+	return 0;
+}
+
 /*
  * Parse option of name "candidate" in the option string "to_parse" of
  * the form
@@ -297,33 +336,8 @@ static int match_atom_arg_value(const char *to_parse, const char *candidate,
 				const char **end, const char **valuestart,
 				size_t *valuelen)
 {
-	const char *atom;
-
-	if (!skip_prefix(to_parse, candidate, &atom))
-		return 0; /* definitely not "candidate" */
-
-	if (*atom == '=') {
-		/* we just saw "candidate=" */
-		*valuestart = atom + 1;
-		atom = strchrnul(*valuestart, ',');
-		*valuelen = atom - *valuestart;
-	} else if (*atom != ',' && *atom != '\0') {
-		/* key begins with "candidate" but has more chars */
-		return 0;
-	} else {
-		/* just "candidate" without "=val" */
-		*valuestart = NULL;
-		*valuelen = 0;
-	}
-
-	/* atom points at either the ',' or NUL after this key[=val] */
-	if (*atom == ',')
-		atom++;
-	else if (*atom)
-		BUG("Why is *atom not NULL yet?");
-
-	*end = atom;
-	return 1;
+	return match_format_arg_value(to_parse, candidate, end,
+				      valuestart, valuelen, '\0');
 }
 
 /*

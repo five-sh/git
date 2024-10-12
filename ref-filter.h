@@ -218,6 +218,35 @@ void filter_is_base(struct repository *r,
 		    struct ref_format *format,
 		    struct ref_array *array);
 
+/*
+ * Parse option of name "candidate" in the option string "to_parse" of
+ * the form
+ *
+ *	"candidate1[=val1],candidate2[=val2],candidate3[=val3],...term_char"
+ *
+ * where "term_char" is the terminating character of "to_parse".  For
+ * example, for pretty formats, term_char = ')'.
+ *
+ * The remaining part of "to_parse" is stored in "end" (if we are
+ * parsing the last candidate, then this is NULL) and the value of
+ * the candidate is stored in "valuestart" and its length in "valuelen",
+ * that is the portion after "=". Since it is possible for a "candidate"
+ * to not have a value, in such cases, "valuestart" is set to point to
+ * NULL and "valuelen" to 0.
+ *
+ * The function returns 1 on success. It returns 0 if we don't find
+ * "candidate" in "to_parse" or we find "candidate" but it is followed
+ * by more chars (for example, "candidatefoo"), that is, we don't find
+ * an exact match.
+ *
+ * This function only does the above for one "candidate" at a time. So
+ * it has to be called each time trying to parse a "candidate" in the
+ * option string "to_parse".
+ */
+int match_format_arg_value(const char *to_parse, const char *candidate,
+			   const char **end, const char **valuestart,
+			   size_t *valuelen, char term_char);
+
 void ref_filter_init(struct ref_filter *filter);
 void ref_filter_clear(struct ref_filter *filter);
 
