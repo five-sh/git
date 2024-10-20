@@ -2141,4 +2141,19 @@ test_expect_success GPG 'show lack of signature with custom format' '
 	test_cmp expect actual
 '
 
+test_expect_failure 'values in formats parse refnames containing ) correctly' '
+	git branch "1)feat" &&
+	cat >expect <<-\EOF &&
+	refs/heads/1)feat
+	not equals
+	not equals
+	not equals
+	not equals
+	not equals
+	EOF
+	git for-each-ref --format="%(if:equals=1)feat)%(refname:short)%(then)%(refname)%(else)not equals%(end)" \
+		refs/heads/ >actual &&
+	test_cmp expect actual
+'
+
 test_done
