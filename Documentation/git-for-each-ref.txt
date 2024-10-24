@@ -221,6 +221,10 @@ if::
 	the value between the %(if:...) and %(then) atoms with the
 	given string.
 
+	Additionally, if `<string>` must contain parenthesis, then these
+	parentheses are spelled out as hexcode.  For e.g., `1)someref`
+	would need to be `1%29someref`.
+
 symref::
 	The ref which the given symbolic ref refers to. If not a
 	symbolic ref, nothing is printed. Respects the `:short`,
