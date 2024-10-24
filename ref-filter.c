@@ -1234,13 +1234,64 @@ static void if_then_else_handler(struct ref_formatting_stack **stack)
 	*stack = cur;
 }
 
+/*
+ * Parse out literals in the string pointed to by "cp" and store them in
+ * a strbuf - this would go on until we hit NUL or "ep".
+ *
+ * While at it, if they're of the form "%xx", where xx represents the
+ * hexcode of some character, then convert them into their equivalent
+ * characters.
+ */
+static void parse_literal(const char *cp, const char *ep,
+			  struct strbuf *s)
+{
+	while (*cp && (!ep || cp < ep)) {
+		if (*cp == '%') {
+			if (cp[1] == '%')
+				cp++;
+			else {
+				int ch = hex2chr(cp + 1);
+				if (0 <= ch) {
+					strbuf_addch(s, ch);
+					cp += 3;
+					continue;
+				}
+			}
+		}
+		strbuf_addch(s, *cp);
+		cp++;
+	}
+}
+
+/*
+ * Convert the string, pointed to by "cp", which might or might not
+ * contain hexcode (in the format of "%xx" where xx is the hexcode) to
+ * its character-equivalent string and return it.
+ *
+ * If the string does not contain any hexcode - then it is returned as
+ * is.
+ */
+static const char *convert_hexcode(const char *cp)
+{
+	struct strbuf s = STRBUF_INIT;
+
+	if (!cp)
+		return NULL;
+	/*
+	 * This has the effect of an in-place translation but
+	 * implementation-wise it is not.
+	 */
+	parse_literal(cp, NULL, &s);
+	return strbuf_detach(&s, NULL);
+}
+
 static int if_atom_handler(struct atom_value *atomv, struct ref_formatting_state *state,
 			   struct strbuf *err UNUSED)
 {
 	struct ref_formatting_stack *new_stack;
 	struct if_then_else *if_then_else = xcalloc(1, sizeof(*if_then_else));
 
-	if_then_else->str = atomv->atom->u.if_then_else.str;
+	if_then_else->str = convert_hexcode(atomv->atom->u.if_then_else.str);
 	if_then_else->cmp_status = atomv->atom->u.if_then_else.cmp_status;
 
 	push_stack_element(&state->stack);
@@ -1296,6 +1347,9 @@ static int then_atom_handler(struct atom_value *atomv UNUSED,
 			if_then_else->condition_satisfied = 1;
 	} else if (cur->output.len && !is_empty(&cur->output))
 		if_then_else->condition_satisfied = 1;
+
+	if (if_then_else->str)
+		free((char *)if_then_else->str);
 	strbuf_reset(&cur->output);
 	return 0;
 }
@@ -3425,26 +3479,12 @@ void ref_array_sort(struct ref_sorting *sorting, struct ref_array *array)
 		QSORT_S(array->items, array->nr, compare_refs, sorting);
 }
 
-static void append_literal(const char *cp, const char *ep, struct ref_formatting_state *state)
+static void append_literal(const char *cp, const char *ep,
+			   struct ref_formatting_state *state)
 {
 	struct strbuf *s = &state->stack->output;
 
-	while (*cp && (!ep || cp < ep)) {
-		if (*cp == '%') {
-			if (cp[1] == '%')
-				cp++;
-			else {
-				int ch = hex2chr(cp + 1);
-				if (0 <= ch) {
-					strbuf_addch(s, ch);
-					cp += 3;
-					continue;
-				}
-			}
-		}
-		strbuf_addch(s, *cp);
-		cp++;
-	}
+	parse_literal(cp, ep, s);
 }
 
 int format_ref_array_item(struct ref_array_item *info,
