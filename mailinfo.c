@@ -1,5 +1,3 @@
-#define USE_THE_REPOSITORY_VARIABLE
-
 #include "git-compat-util.h"
 #include "config.h"
 #include "gettext.h"
@@ -1251,8 +1249,11 @@ static int git_mailinfo_config(const char *var, const char *value,
 {
 	struct mailinfo *mi = mi_;
 
-	if (!starts_with(var, "mailinfo."))
-		return git_default_config(var, value, ctx, NULL);
+	if (!strcmp(var, "i18n.commitencoding")) {
+		FREE_AND_NULL(mi->commit_encoding);
+		return git_config_string(&mi->commit_encoding, var, value);
+	}
+
 	if (!strcmp(var, "mailinfo.scissors")) {
 		mi->use_scissors = git_config_bool(var, value);
 		return 0;
@@ -1265,10 +1266,11 @@ static int git_mailinfo_config(const char *var, const char *value,
 		return 0;
 	}
 	/* perhaps others here */
-	return 0;
+
+	return git_default_config(var, value, ctx, NULL);
 }
 
-void setup_mailinfo(struct mailinfo *mi)
+void setup_mailinfo(struct repository *repo, struct mailinfo *mi)
 {
 	memset(mi, 0, sizeof(*mi));
 	strbuf_init(&mi->name, 0);
@@ -1279,8 +1281,9 @@ void setup_mailinfo(struct mailinfo *mi)
 	mi->quoted_cr = quoted_cr_warn;
 	mi->header_stage = 1;
 	mi->use_inbody_headers = 1;
+	mi->commit_encoding = xstrdup("UTF-8");
 	mi->content_top = mi->content;
-	git_config(git_mailinfo_config, mi);
+	repo_config(repo, git_mailinfo_config, mi);
 }
 
 void clear_mailinfo(struct mailinfo *mi)
@@ -1289,6 +1292,7 @@ void clear_mailinfo(struct mailinfo *mi)
 	strbuf_release(&mi->email);
 	strbuf_release(&mi->charset);
 	strbuf_release(&mi->inbody_header_accum);
+	free(mi->commit_encoding);
 	free(mi->message_id);
 
 	for (size_t i = 0; i < ARRAY_SIZE(header); i++) {

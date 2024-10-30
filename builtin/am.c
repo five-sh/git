@@ -1210,10 +1210,10 @@ static int parse_mail(struct am_state *state, const char *mail)
 	int ret = 0;
 	struct mailinfo mi;
 
-	setup_mailinfo(&mi);
+	setup_mailinfo(the_repository, &mi);
 
 	if (state->utf8)
-		mi.metainfo_charset = get_commit_output_encoding();
+		mi.metainfo_charset = mi.commit_encoding;
 	else
 		mi.metainfo_charset = NULL;
 

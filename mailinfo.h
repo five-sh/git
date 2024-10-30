@@ -25,6 +25,7 @@ struct mailinfo {
 	int add_message_id;
 	int use_scissors;
 	int use_inbody_headers;
+	char *commit_encoding;
 	const char *metainfo_charset;
 
 	struct strbuf *content[MAX_BOUNDARIES];
@@ -49,7 +50,7 @@ struct mailinfo {
 };
 
 int mailinfo_parse_quoted_cr_action(const char *actionstr, int *action);
-void setup_mailinfo(struct mailinfo *);
+void setup_mailinfo(struct repository *repo, struct mailinfo *);
 int mailinfo(struct mailinfo *, const char *msg, const char *patch);
 void clear_mailinfo(struct mailinfo *);
 
