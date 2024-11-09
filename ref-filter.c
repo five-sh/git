@@ -271,44 +271,30 @@ static int err_bad_arg(struct strbuf *sb, const char *name, const char *arg)
 	return -1;
 }
 
-/*
- * Parse option of name "candidate" in the option string "to_parse" of
- * the form
- *
- *	"candidate1[=val1],candidate2[=val2],candidate3[=val3],..."
- *
- * The remaining part of "to_parse" is stored in "end" (if we are
- * parsing the last candidate, then this is NULL) and the value of
- * the candidate is stored in "valuestart" and its length in "valuelen",
- * that is the portion after "=". Since it is possible for a "candidate"
- * to not have a value, in such cases, "valuestart" is set to point to
- * NULL and "valuelen" to 0.
- *
- * The function returns 1 on success. It returns 0 if we don't find
- * "candidate" in "to_parse" or we find "candidate" but it is followed
- * by more chars (for example, "candidatefoo"), that is, we don't find
- * an exact match.
- *
- * This function only does the above for one "candidate" at a time. So
- * it has to be called each time trying to parse a "candidate" in the
- * option string "to_parse".
- */
-static int match_atom_arg_value(const char *to_parse, const char *candidate,
-				const char **end, const char **valuestart,
-				size_t *valuelen)
+int match_format_arg_value(const char *to_parse, const char *candidate,
+			   const char **end, const char **valuestart,
+			   size_t *valuelen, char term_char)
 {
-	const char *atom;
+	const char *p;
 
-	if (!skip_prefix(to_parse, candidate, &atom))
+	if (!skip_prefix(to_parse, candidate, &p))
 		return 0; /* definitely not "candidate" */
 
-	if (*atom == '=') {
+	if (*p == '=') {
 		/* we just saw "candidate=" */
-		*valuestart = atom + 1;
-		atom = strchrnul(*valuestart, ',');
-		*valuelen = atom - *valuestart;
-	} else if (*atom != ',' && *atom != '\0') {
-		/* key begins with "candidate" but has more chars */
+		*valuestart = p + 1;
+
+		p = strchr(*valuestart, ',');
+		if (!p) {
+			p = strchr(*valuestart, term_char);
+			if (!p)
+				BUG("%c is expected to terminate %s",
+				    term_char, to_parse);
+		}
+
+		*valuelen = p - *valuestart;
+	} else if (*p != ',' && *p != term_char) {
+		/* key begins with "candidate" but has more chars not term_char */
 		return 0;
 	} else {
 		/* just "candidate" without "=val" */
@@ -316,46 +302,25 @@ static int match_atom_arg_value(const char *to_parse, const char *candidate,
 		*valuelen = 0;
 	}
 
-	/* atom points at either the ',' or NUL after this key[=val] */
-	if (*atom == ',')
-		atom++;
-	else if (*atom)
-		BUG("Why is *atom not NULL yet?");
+	/* p points at either the ',' or term_char after this key[=val] */
+	if (*p == ',')
+		*end = p + 1;
+	else if (*p == term_char)
+		*end = p;
 
-	*end = atom;
 	return 1;
 }
 
-/*
- * Parse boolean option of name "candidate" in the option list "to_parse"
- * of the form
- *
- *	"candidate1[=bool1],candidate2[=bool2],candidate3[=bool3],..."
- *
- * The remaining part of "to_parse" is stored in "end" (if we are parsing
- * the last candidate, then this is NULL) and the value (if given) is
- * parsed and stored in "val", so "val" always points to either 0 or 1.
- * If the value is not given, then "val" is set to point to 1.
- *
- * The boolean value is parsed using "git_parse_maybe_bool()", so the
- * accepted values are
- *
- *	to set true  - "1", "yes", "true"
- *	to set false - "0", "no", "false"
- *
- * This function returns 1 on success. It returns 0 when we don't find
- * an exact match for "candidate" or when the boolean value given is
- * not valid.
- */
-static int match_atom_bool_arg(const char *to_parse, const char *candidate,
-				const char **end, int *val)
+int match_format_bool_arg(const char *to_parse, const char *candidate,
+			  const char **end, int *val, char term_char)
 {
 	const char *argval;
 	char *strval;
 	size_t arglen;
 	int v;
 
-	if (!match_atom_arg_value(to_parse, candidate, end, &argval, &arglen))
+	if (!match_format_arg_value(to_parse, candidate, end, &argval,
+				    &arglen, term_char))
 		return 0;
 
 	if (!argval) {
@@ -639,7 +604,7 @@ static int describe_atom_option_parser(struct strvec *args, const char **arg,
 	size_t arglen = 0;
 	int optval = 0;
 
-	if (match_atom_bool_arg(*arg, "tags", arg, &optval)) {
+	if (match_format_bool_arg(*arg, "tags", arg, &optval, '\0')) {
 		if (!optval)
 			strvec_push(args, "--no-tags");
 		else
@@ -647,7 +612,7 @@ static int describe_atom_option_parser(struct strvec *args, const char **arg,
 		return 1;
 	}
 
-	if (match_atom_arg_value(*arg, "abbrev", arg, &argval, &arglen)) {
+	if (match_format_arg_value(*arg, "abbrev", arg, &argval, &arglen, '\0')) {
 		char *endptr;
 
 		if (!arglen)
@@ -667,7 +632,7 @@ static int describe_atom_option_parser(struct strvec *args, const char **arg,
 		return 1;
 	}
 
-	if (match_atom_arg_value(*arg, "match", arg, &argval, &arglen)) {
+	if (match_format_arg_value(*arg, "match", arg, &argval, &arglen, '\0')) {
 		if (!arglen)
 			return strbuf_addf_ret(err, -1,
 					       _("value expected %s="),
@@ -677,7 +642,7 @@ static int describe_atom_option_parser(struct strvec *args, const char **arg,
 		return 1;
 	}
 
-	if (match_atom_arg_value(*arg, "exclude", arg, &argval, &arglen)) {
+	if (match_format_arg_value(*arg, "exclude", arg, &argval, &arglen, '\0')) {
 		if (!arglen)
 			return strbuf_addf_ret(err, -1,
 					       _("value expected %s="),

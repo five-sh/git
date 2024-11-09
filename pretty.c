@@ -11,6 +11,7 @@
 #include "diff.h"
 #include "pager.h"
 #include "revision.h"
+#include "ref-filter.h"
 #include "string-list.h"
 #include "mailmap.h"
 #include "log-tree.h"
@@ -1190,75 +1191,6 @@ static size_t parse_padding_placeholder(const char *placeholder,
 		return end - placeholder + 1;
 	}
 	return 0;
-}
-
-static int match_format_arg_value(const char *to_parse, const char *candidate,
-				  const char **end, const char **valuestart,
-				  size_t *valuelen, char term_char)
-{
-	const char *p;
-
-	if (!skip_prefix(to_parse, candidate, &p))
-		return 0; /* definitely not "candidate" */
-
-	if (*p == '=') {
-		/* we just saw "candidate=" */
-		*valuestart = p + 1;
-
-		p = strchr(*valuestart, ',');
-		if (!p) {
-			p = strchr(*valuestart, term_char);
-			if (!p)
-				BUG("%c is expected to terminate %s",
-				    term_char, to_parse);
-		}
-
-		*valuelen = p - *valuestart;
-	} else if (*p != ',' && *p != term_char) {
-		/* key begins with "candidate" but has more chars not term_char */
-		return 0;
-	} else {
-		/* just "candidate" without "=val" */
-		*valuestart = NULL;
-		*valuelen = 0;
-	}
-
-	/* p points at either the ',' or term_char after this key[=val] */
-	if (*p == ',')
-		*end = p + 1;
-	else if (*p == term_char)
-		*end = p;
-
-	return 1;
-}
-
-static int match_format_bool_arg(const char *to_parse, const char *candidate,
-				 const char **end, int *val, char term_char)
-{
-	const char *argval;
-	char *strval;
-	size_t arglen;
-	int v;
-
-	if (!match_format_arg_value(to_parse, candidate, end, &argval,
-				    &arglen, term_char))
-		return 0;
-
-	if (!argval) {
-		*val = 1;
-		return 1;
-	}
-
-	strval = xstrndup(argval, arglen);
-	v = git_parse_maybe_bool(strval);
-	free(strval);
-
-	if (v == -1)
-		return 0;
-
-	*val = v;
-
-	return 1;
 }
 
 static int format_trailer_match_cb(const struct strbuf *key, void *ud)
