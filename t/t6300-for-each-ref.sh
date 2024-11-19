@@ -847,6 +847,34 @@ test_expect_success 'err on bad describe atom arg' '
 	)
 '
 
+test_expect_success 'bare notes atom' '
+	test_when_finished "git checkout main && git branch -D notes-atom " &&
+
+	git checkout -b notes-atom &&
+	test_commit --no-tag "commit on notes-atom" &&
+
+	git notes add -m "some msg" refs/heads/notes-atom &&
+	git notes show refs/heads/notes-atom >expect &&
+	git for-each-ref --format="%(notes)" refs/heads/notes-atom >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'notes atom with notes ref' '
+	test_when_finished \
+		"git checkout main && git branch -D notes-atom-refname" &&
+
+	git checkout -b notes-atom-refname &&
+	test_commit --no-tag "commit on notes-atom-refname" &&
+
+	git notes --ref notes-ref add -m "some msg" \
+		 refs/heads/notes-atom-refname &&
+	git notes --ref notes-ref show \
+		refs/heads/notes-atom-refname >expect &&
+	git for-each-ref --format="%(notes:notes-ref)" \
+		refs/heads/notes-atom-refname >actual &&
+	test_cmp expect actual
+'
+
 cat >expected <<\EOF
 heads/main
 tags/main

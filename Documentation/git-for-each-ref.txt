@@ -329,6 +329,13 @@ exclude=<pattern>;;
 	in linkgit:git-describe[1] for details.
 --
 
+notes:<notes-ref>::
+	Show notes associated with a ref.  Defaults to getting notes
+	from `refs/notes/commits`.  If `"notes-ref"` is given then notes
+	retrieved from that ref are shown; for the given ref.  For
+	example, `%(notes:amlog)` will retrieve the notes from
+	`refs/notes/amlog` for the given ref.  See linkgit:git-notes[1].
+
 In addition to the above, for commit and tag objects, the header
 field names (`tree`, `parent`, `object`, `type`, and `tag`) can
 be used to specify the value in the header field.

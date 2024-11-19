@@ -155,6 +155,7 @@ enum atom_type {
 	ATOM_TRAILERS,
 	ATOM_CONTENTS,
 	ATOM_SIGNATURE,
+	ATOM_NOTES,
 	ATOM_RAW,
 	ATOM_UPSTREAM,
 	ATOM_PUSH,
@@ -235,6 +236,7 @@ static struct used_atom {
 			       S_FINGERPRINT, S_PRI_KEY_FP, S_TRUST_LEVEL } option;
 		} signature;
 		struct strvec describe_args;
+		const char *notes_refname;
 		struct refname_atom refname;
 		char *head;
 	} u;
@@ -712,6 +714,15 @@ static int describe_atom_parser(struct ref_format *format UNUSED,
 	return 0;
 }
 
+static int notes_atom_parser(struct ref_format *format UNUSED,
+			     struct used_atom *atom,
+			     const char *arg, struct strbuf *err UNUSED)
+{
+	if (arg)
+		atom->u.notes_refname = arg;
+	return 0;
+}
+
 static int raw_atom_parser(struct ref_format *format UNUSED,
 			   struct used_atom *atom,
 			   const char *arg, struct strbuf *err)
@@ -974,6 +985,7 @@ static struct {
 	[ATOM_TRAILERS] = { "trailers", SOURCE_OBJ, FIELD_STR, trailers_atom_parser },
 	[ATOM_CONTENTS] = { "contents", SOURCE_OBJ, FIELD_STR, contents_atom_parser },
 	[ATOM_SIGNATURE] = { "signature", SOURCE_OBJ, FIELD_STR, signature_atom_parser },
+	[ATOM_NOTES] = { "notes", SOURCE_OBJ, FIELD_STR, notes_atom_parser },
 	[ATOM_RAW] = { "raw", SOURCE_OBJ, FIELD_STR, raw_atom_parser },
 	[ATOM_UPSTREAM] = { "upstream", SOURCE_NONE, FIELD_STR, remote_ref_atom_parser },
 	[ATOM_PUSH] = { "push", SOURCE_NONE, FIELD_STR, remote_ref_atom_parser },
@@ -1957,6 +1969,44 @@ static void grab_describe_values(struct atom_value *val, int deref,
 	}
 }
 
+static void grab_notes_values(struct atom_value *val, int deref,
+			      struct object *obj)
+{
+	for (int i = 0; i < used_atom_cnt; i++) {
+		struct used_atom *atom = &used_atom[i];
+		const char *name = atom->name;
+		struct atom_value *v = &val[i];
+
+		struct child_process cmd = CHILD_PROCESS_INIT;
+		struct strbuf out = STRBUF_INIT;
+		struct strbuf err = STRBUF_INIT;
+
+		if (atom->atom_type != ATOM_NOTES)
+			continue;
+
+		if (!!deref != (*name == '*'))
+			continue;
+
+		cmd.git_cmd = 1;
+		strvec_push(&cmd.args, "notes");
+		if (atom->u.notes_refname) {
+			strvec_push(&cmd.args, "--ref");
+			strvec_push(&cmd.args, atom->u.notes_refname);
+		}
+		strvec_push(&cmd.args, "show");
+		strvec_push(&cmd.args, oid_to_hex(&obj->oid));
+		if (pipe_command(&cmd, NULL, 0, &out, 0, &err, 0) < 0) {
+			error(_("failed to run 'notes'"));
+			v->s = xstrdup("");
+			continue;
+		}
+		strbuf_rtrim(&out);
+		v->s = strbuf_detach(&out, NULL);
+
+		strbuf_release(&err);
+	}
+}
+
 /* See grab_values */
 static void grab_sub_body_contents(struct atom_value *val, int deref, struct expand_data *data)
 {
@@ -2076,6 +2126,7 @@ static void grab_values(struct atom_value *val, int deref, struct object *obj, s
 		grab_sub_body_contents(val, deref, data);
 		grab_person("tagger", val, deref, buf);
 		grab_describe_values(val, deref, obj);
+		grab_notes_values(val, deref, obj);
 		break;
 	case OBJ_COMMIT:
 		grab_commit_values(val, deref, obj);
@@ -2084,14 +2135,17 @@ static void grab_values(struct atom_value *val, int deref, struct object *obj, s
 		grab_person("committer", val, deref, buf);
 		grab_signature(val, deref, obj);
 		grab_describe_values(val, deref, obj);
+		grab_notes_values(val, deref, obj);
 		break;
 	case OBJ_TREE:
 		/* grab_tree_values(val, deref, obj, buf, sz); */
 		grab_sub_body_contents(val, deref, data);
+		grab_notes_values(val, deref, obj);
 		break;
 	case OBJ_BLOB:
 		/* grab_blob_values(val, deref, obj, buf, sz); */
 		grab_sub_body_contents(val, deref, data);
+		grab_notes_values(val, deref, obj);
 		break;
 	default:
 		die("Eh?  Object of type %d?", obj->type);
